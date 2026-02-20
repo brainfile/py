@@ -278,6 +278,11 @@ class Task(BaseModel):
 
     id: str
     title: str
+    parent_id: str | None = Field(
+        default=None,
+        alias="parentId",
+        description="Optional parent task/document ID for parent-child linking",
+    )
     description: str | None = None
     related_files: list[str] | None = Field(default=None, alias="relatedFiles")
     assignee: str | None = None
@@ -290,7 +295,9 @@ class Task(BaseModel):
     """ISO 8601 timestamp"""
     updated_at: str | None = Field(default=None, alias="updatedAt")
     """ISO 8601 timestamp"""
-    
+    completed_at: str | None = Field(default=None, alias="completedAt")
+    """ISO 8601 timestamp when task was completed (v2)"""
+
     # V2 Protocol Fields
     column: str | None = Field(
         default=None,
@@ -381,6 +388,7 @@ class Column(BaseModel):
     id: str
     title: str
     order: int | None = None
+    completion_column: bool | None = Field(default=None, alias="completionColumn")
     tasks: list[Task] = Field(default_factory=list)
 
 
