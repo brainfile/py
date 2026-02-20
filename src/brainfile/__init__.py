@@ -25,91 +25,126 @@ __version__ = "0.1.0"
 # Models
 # =============================================================================
 
+from .board_validation import (
+    BoardValidationResult,
+    getBoardTypes,
+    validateColumn,
+    validateType,
+)
+from .contract_ops import (
+    addTaskContractConstraint,
+    addTaskContractDeliverable,
+    addTaskContractValidationCommand,
+    clearTaskContract,
+    patchTaskContract,
+    removeTaskContractConstraint,
+    removeTaskContractDeliverable,
+    removeTaskContractValidationCommand,
+    setTaskContract,
+    setTaskContractStatus,
+)
+
+# =============================================================================
+# Discovery
+# =============================================================================
+from .discovery import (
+    BRAINFILE_GLOBS,
+    BRAINFILE_PATTERNS,
+    EXCLUDE_DIRS,
+    DiscoveredFile,
+    DiscoveryOptions,
+    DiscoveryResult,
+    discover,
+    extract_brainfile_suffix,
+    find_nearest_brainfile,
+    find_primary_brainfile,
+    is_brainfile_name,
+    watch_brainfiles,
+)
+from .files import (
+    FoundBrainfile,
+    ResolveBrainfilePathOptions,
+    ensureDotBrainfileDir,
+    ensureDotBrainfileGitignore,
+    findBrainfile,
+    getBrainfileStateDir,
+    getBrainfileStatePath,
+    getDotBrainfileGitignorePath,
+    resolveBrainfilePath,
+)
+from .formatters import (
+    GitHubFormatOptions,
+    GitHubIssuePayload,
+    LinearFormatOptions,
+    LinearIssuePayload,
+    formatTaskForGitHub,
+    formatTaskForLinear,
+)
+
+# =============================================================================
+# ID Generation
+# =============================================================================
+from .id_gen import (
+    extract_task_id_number,
+    generate_next_subtask_id,
+    generate_next_task_id,
+    get_max_task_id_number,
+    get_parent_task_id,
+    is_valid_subtask_id,
+    is_valid_task_id,
+)
+from .id_gen import (
+    generate_subtask_id as generate_subtask_id_from_index,
+)
+
+# =============================================================================
+# Inference
+# =============================================================================
+from .inference import infer_renderer, infer_type
+
+# =============================================================================
+# Linter
+# =============================================================================
+from .linter import BrainfileLinter, LintIssue, LintOptions, LintResult
 from .models import (
+    # Base models
+    AgentInstructions,
+    # Board models
+    Board,
+    BoardConfig,
     # Enums
     BrainfileType,
+    Column,
+    ColumnConfig,
+    Contract,
+    ContractContext,
+    ContractStatus,
+    Deliverable,
     Priority,
     PriorityLiteral,
     RendererType,
-    RuleTypeLiteral,
-    TemplateLiteral,
-    TemplateType,
-    # Base models
-    AgentInstructions,
     Rule,
     Rules,
+    RuleTypeLiteral,
     StatsConfig,
     Subtask,
     Task,
     TaskTemplate,
     TemplateConfig,
+    TemplateLiteral,
+    TemplateType,
     TemplateVariable,
-    # Board models
-    Board,
-    Column,
+    TypeEntry,
+    ValidationConfig,
+)
+from .models import (
     # Union type (board only in official apps)
     Brainfile as BrainfileUnion,
 )
 
 # =============================================================================
-# Parser
-# =============================================================================
-
-from .parser import BrainfileParser, ParseResult
-
-# =============================================================================
-# Inference
-# =============================================================================
-
-from .inference import infer_renderer, infer_type
-
-# =============================================================================
-# Schema Hints
-# =============================================================================
-
-from .schema_hints import SchemaHints, load_schema_hints, parse_schema_hints
-
-# =============================================================================
-# Serializer
-# =============================================================================
-
-from .serializer import BrainfileSerializer, SerializeOptions
-
-# =============================================================================
-# Validator
-# =============================================================================
-
-from .validator import BrainfileValidator, ValidationError, ValidationResult
-
-# =============================================================================
-# Linter
-# =============================================================================
-
-from .linter import BrainfileLinter, LintIssue, LintOptions, LintResult
-
-# =============================================================================
-# Realtime
-# =============================================================================
-
-from .realtime import BoardDiff, ColumnDiff, TaskDiff, diff_boards, hash_board, hash_board_content
-
-# =============================================================================
-# Templates
-# =============================================================================
-
-from .templates import (
-    BUILT_IN_TEMPLATES,
-    generate_subtask_id,
-    generate_task_id,
-    get_all_template_ids,
-    get_template_by_id,
-    process_template,
-)
-
-# =============================================================================
 # Operations
 # =============================================================================
-
 from .operations import (
     BoardOperationResult,
     BulkItemResult,
@@ -138,9 +173,13 @@ from .operations import (
 )
 
 # =============================================================================
+# Parser
+# =============================================================================
+from .parser import BrainfileParser, ParseResult
+
+# =============================================================================
 # Query
 # =============================================================================
-
 from .query import (
     TaskInfo,
     column_exists,
@@ -160,39 +199,77 @@ from .query import (
 )
 
 # =============================================================================
-# ID Generation
+# Realtime
 # =============================================================================
+from .realtime import BoardDiff, ColumnDiff, TaskDiff, diff_boards, hash_board, hash_board_content
 
-from .id_gen import (
-    extract_task_id_number,
-    generate_next_subtask_id,
-    generate_next_task_id,
-    generate_subtask_id as generate_subtask_id_from_index,
-    get_max_task_id_number,
-    get_parent_task_id,
-    is_valid_subtask_id,
-    is_valid_task_id,
+# =============================================================================
+# Schema Hints
+# =============================================================================
+from .schema_hints import SchemaHints, load_schema_hints, parse_schema_hints
+
+# =============================================================================
+# Serializer
+# =============================================================================
+from .serializer import BrainfileSerializer, SerializeOptions
+
+# =============================================================================
+# V2 Protocol
+# =============================================================================
+from .task_file import (
+    parseTaskContent,
+    readTaskFile,
+    readTasksDir,
+    serializeTaskContent,
+    taskFileName,
+    writeTaskFile,
+)
+from .task_operations import (
+    TaskFileInput,
+    TaskFilters,
+    TaskOperationResult,
+    addTaskFile,
+    appendLog,
+    completeTaskFile,
+    deleteTaskFile,
+    findTask,
+    generateNextFileTaskId,
+    listTasks,
+    moveTaskFile,
+    searchLogs,
+    searchTaskFiles,
 )
 
 # =============================================================================
-# Discovery
+# Templates
 # =============================================================================
-
-from .discovery import (
-    BRAINFILE_GLOBS,
-    BRAINFILE_PATTERNS,
-    EXCLUDE_DIRS,
-    DiscoveredFile,
-    DiscoveryOptions,
-    DiscoveryResult,
-    discover,
-    extract_brainfile_suffix,
-    find_nearest_brainfile,
-    find_primary_brainfile,
-    is_brainfile_name,
-    watch_brainfiles,
+from .templates import (
+    BUILT_IN_TEMPLATES,
+    generate_subtask_id,
+    generate_task_id,
+    get_all_template_ids,
+    get_template_by_id,
+    process_template,
 )
 
+# =============================================================================
+# Validator
+# =============================================================================
+from .validator import BrainfileValidator, ValidationError, ValidationResult
+from .workspace import (
+    V2Dirs,
+    buildBoardFromV2,
+    composeBody,
+    ensureV2Dirs,
+    extractDescription,
+    extractLog,
+    findV2Task,
+    getLogFilePath,
+    getTaskFilePath,
+    getV2Dirs,
+    isV2,
+    readV2BoardConfig,
+)
 
 # =============================================================================
 # Main Facade Class
@@ -411,6 +488,14 @@ __all__ = [
     # Board models
     "Column",
     "Board",
+    "BoardConfig",
+    "ColumnConfig",
+    "TypeEntry",
+    "Contract",
+    "ContractStatus",
+    "ContractContext",
+    "Deliverable",
+    "ValidationConfig",
     # Union type (board only in official apps)
     "BrainfileUnion",
     # Parser
@@ -512,4 +597,65 @@ __all__ = [
     "DiscoveredFile",
     "DiscoveryOptions",
     "DiscoveryResult",
+    # V2 Protocol
+    "parseTaskContent",
+    "serializeTaskContent",
+    "readTaskFile",
+    "writeTaskFile",
+    "readTasksDir",
+    "taskFileName",
+    "V2Dirs",
+    "getV2Dirs",
+    "isV2",
+    "ensureV2Dirs",
+    "getTaskFilePath",
+    "getLogFilePath",
+    "findV2Task",
+    "extractDescription",
+    "extractLog",
+    "composeBody",
+    "readV2BoardConfig",
+    "buildBoardFromV2",
+    "findBrainfile",
+    "resolveBrainfilePath",
+    "getBrainfileStateDir",
+    "getBrainfileStatePath",
+    "getDotBrainfileGitignorePath",
+    "ensureDotBrainfileDir",
+    "ensureDotBrainfileGitignore",
+    "FoundBrainfile",
+    "ResolveBrainfilePathOptions",
+    "generateNextFileTaskId",
+    "addTaskFile",
+    "moveTaskFile",
+    "completeTaskFile",
+    "deleteTaskFile",
+    "appendLog",
+    "listTasks",
+    "findTask",
+    "searchTaskFiles",
+    "searchLogs",
+    "TaskOperationResult",
+    "TaskFileInput",
+    "TaskFilters",
+    "getBoardTypes",
+    "validateType",
+    "validateColumn",
+    "BoardValidationResult",
+    "setTaskContract",
+    "clearTaskContract",
+    "setTaskContractStatus",
+    "patchTaskContract",
+    "addTaskContractDeliverable",
+    "removeTaskContractDeliverable",
+    "addTaskContractValidationCommand",
+    "removeTaskContractValidationCommand",
+    "addTaskContractConstraint",
+    "removeTaskContractConstraint",
+    "formatTaskForGitHub",
+    "formatTaskForLinear",
+    "GitHubIssuePayload",
+    "GitHubFormatOptions",
+    "LinearIssuePayload",
+    "LinearFormatOptions",
 ]

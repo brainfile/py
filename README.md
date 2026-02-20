@@ -18,8 +18,9 @@ pip install brainfile
 - File discovery and watching
 - Linting with auto-fix capabilities
 - Built-in task templates
+- **V2 Protocol Support**: Per-task markdown files, distributed board architecture, and agent contracts.
 
-## Quick Start
+## Quick Start (V1 - Single File)
 
 ```python
 from brainfile import Brainfile
@@ -47,6 +48,28 @@ updated_board = result.board
 
 # Serialize back to markdown
 markdown = Brainfile.serialize(updated_board)
+```
+
+## Quick Start (V2 - Distributed)
+
+V2 uses a `.brainfile/` directory with individual task files for better Git hygiene.
+
+```python
+from brainfile import ensureV2Dirs, addTaskFile, completeTaskFile
+
+# 1. Setup V2 workspace
+dirs = ensureV2Dirs(".brainfile/brainfile.md")
+
+# 2. Add a new task file to board/
+result = addTaskFile(
+    dirs.boardDir, 
+    {"title": "Implement feature", "column": "todo"},
+    body="## Description\nDetailed implementation notes."
+)
+task_path = result["filePath"]
+
+# 3. Complete a task (moves it to logs/ and adds completedAt)
+completeTaskFile(task_path, dirs.logsDir)
 ```
 
 ## API Reference
@@ -147,6 +170,43 @@ for file in result.files:
 
 # Find nearest brainfile (walks up directory tree)
 brainfile = find_nearest_brainfile()
+```
+
+### V2 Task Operations
+
+V2 operations handle individual files in `.brainfile/board/` and `.brainfile/logs/`.
+
+```python
+from brainfile import addTaskFile, moveTaskFile, completeTaskFile, appendLog
+
+# Create a task file
+res = addTaskFile(board_dir, {"title": "Task 1", "column": "todo"})
+
+# Move to another column
+moveTaskFile(res["filePath"], "done")
+
+# Append a log entry
+appendLog(res["filePath"], "Work in progress", agent="otto")
+
+# Complete and move to logs/
+completeTaskFile(res["filePath"], logs_dir)
+```
+
+### Agent Contracts (V2)
+
+Tasks can have formal contracts for AI agents.
+
+```python
+from brainfile import setTaskContract, Contract, Deliverable
+
+contract = Contract(
+    status="ready",
+    deliverables=[Deliverable(type="file", path="src/main.py")],
+    constraints=["Must use Python 3.10+"]
+)
+
+# Apply to a task in a board model
+setTaskContract(board, "task-1", contract)
 ```
 
 ## License
