@@ -140,6 +140,137 @@ class Subtask(BaseModel):
     completed: bool = False
 
 
+# =============================================================================
+# V2 Protocol: Contract System Types (defined before Task due to forward refs)
+# =============================================================================
+
+
+class Deliverable(BaseModel):
+    """Represents a single deliverable in a contract."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    type: str = Field(
+        description="Deliverable type: 'file' | 'test' | 'doc' | 'link' | 'other' | custom"
+    )
+    path: str = Field(description="Path to deliverable (file path, URL, etc.)")
+    description: str | None = Field(
+        default=None,
+        description="Human-readable description of deliverable"
+    )
+
+
+class ValidationConfig(BaseModel):
+    """Commands and configuration for validating contract deliverables."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    commands: list[str] | None = Field(
+        default=None,
+        description="Shell commands to run for validation (e.g., tests, linting)"
+    )
+
+
+class ContractContext(BaseModel):
+    """Contextual information for understanding task requirements."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    background: str | None = Field(
+        default=None,
+        description="Background information or requirements"
+    )
+    relevant_files: list[str] | None = Field(
+        default=None,
+        alias="relevantFiles",
+        description="Files relevant to understanding the task"
+    )
+    out_of_scope: list[str] | None = Field(
+        default=None,
+        alias="outOfScope",
+        description="Items explicitly out of scope"
+    )
+
+
+class ContractMetrics(BaseModel):
+    """Metrics for tracking contract lifecycle and performance."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    picked_up_at: str | None = Field(
+        default=None,
+        alias="pickedUpAt",
+        description="ISO 8601 timestamp when agent picked up task"
+    )
+    delivered_at: str | None = Field(
+        default=None,
+        alias="deliveredAt",
+        description="ISO 8601 timestamp when deliverables submitted"
+    )
+    duration: int | None = Field(
+        default=None,
+        description="Duration in milliseconds from pickup to delivery"
+    )
+    rework_count: int | None = Field(
+        default=None,
+        alias="reworkCount",
+        description="Number of times contract was reworked"
+    )
+
+
+ContractStatus = Literal["draft", "ready", "in_progress", "delivered", "done", "failed"]
+"""Contract status type."""
+
+
+class Contract(BaseModel):
+    """Complete contract specification for agent task execution."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    status: ContractStatus = Field(
+        default="draft",
+        description="Current contract status"
+    )
+    deliverables: list[Deliverable] | None = Field(
+        default=None,
+        description="Required deliverables for contract completion"
+    )
+    validation: ValidationConfig | None = Field(
+        default=None,
+        description="Validation configuration and commands"
+    )
+    constraints: list[str] | None = Field(
+        default=None,
+        description="Constraints or requirements (e.g., performance, security)"
+    )
+    context: ContractContext | None = Field(
+        default=None,
+        description="Context and background for understanding requirements"
+    )
+    metrics: ContractMetrics | None = Field(
+        default=None,
+        description="Metrics tracking contract lifecycle"
+    )
+
+
+class ContractPatch(BaseModel):
+    """Partial update to a contract."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    status: ContractStatus | None = None
+    deliverables: list[Deliverable] | None = None
+    validation: ValidationConfig | None = None
+    constraints: list[str] | None = None
+    context: ContractContext | None = None
+    metrics: ContractMetrics | None = None
+
+
+# =============================================================================
+# Task Type (with V2 extensions)
+# =============================================================================
+
+
 class Task(BaseModel):
     """Task definition - used by board type."""
 
@@ -159,6 +290,24 @@ class Task(BaseModel):
     """ISO 8601 timestamp"""
     updated_at: str | None = Field(default=None, alias="updatedAt")
     """ISO 8601 timestamp"""
+    
+    # V2 Protocol Fields
+    column: str | None = Field(
+        default=None,
+        description="V2 format: column ID (from frontmatter). V1: derived from column location."
+    )
+    position: int | None = Field(
+        default=None,
+        description="V2 format: position within column for ordering"
+    )
+    contract: Contract | None = Field(
+        default=None,
+        description="Agent contract specification (v2)"
+    )
+    type: str | None = Field(
+        default=None,
+        description="Custom task type (e.g., 'epic', 'adr', 'spike')"
+    )
 
 
 class TemplateVariable(BaseModel):
@@ -192,6 +341,31 @@ class TemplateConfig(BaseModel):
 
     built_in_templates: list[TaskTemplate] = Field(alias="builtInTemplates")
     user_templates: list[TaskTemplate] = Field(alias="userTemplates")
+
+
+# =============================================================================
+# V2 Protocol: Task File Types
+# =============================================================================
+
+
+class TaskDocument(BaseModel):
+    """
+    Container for a v2 task file (board/*.md or logs/*.md).
+    
+    Represents the parsed structure of a single task file:
+    - Frontmatter (YAML): Task metadata
+    - Body (Markdown): Description + logs
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    task: Task
+    body: str = Field(description="Markdown body: description + logs")
+    file_path: str | None = Field(
+        default=None,
+        alias="filePath",
+        description="Full path to task file"
+    )
 
 
 # =============================================================================
@@ -242,6 +416,91 @@ class Board(BaseModel):
     columns: list[Column] = Field(default_factory=list)
     archive: list[Task] | None = None
     stats_config: StatsConfig | None = Field(default=None, alias="statsConfig")
+
+
+# =============================================================================
+# V2 Protocol: Board Configuration Types
+# =============================================================================
+
+
+class ColumnConfig(BaseModel):
+    """
+    Configuration for a single board column (v2 format).
+    V2 columns don't embed tasks; they're references.
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    id: str = Field(description="Unique column identifier")
+    title: str = Field(description="Human-readable column title")
+    order: int | None = Field(
+        default=None,
+        description="Sort order for column display"
+    )
+    completion_column: bool | None = Field(
+        default=False,
+        alias="completionColumn",
+        description="If true, marks this as a completion/archive column"
+    )
+
+
+class TypeEntry(BaseModel):
+    """Configuration for a custom task type in strict mode."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    id_prefix: str = Field(
+        alias="idPrefix",
+        description="ID prefix for this type (e.g., 'epic', 'adr', 'spike')"
+    )
+    completable: bool | None = Field(
+        default=True,
+        description="Whether tasks of this type can be marked complete"
+    )
+    schema: str | None = Field(
+        default=None,
+        description="Optional JSON schema URI for type validation"
+    )
+
+
+TypesConfig = dict[str, TypeEntry]
+"""Type configuration mapping."""
+
+
+class BoardConfig(BaseModel):
+    """
+    V2 format board configuration (from .brainfile/brainfile.md).
+    Different from v1 Board which embeds tasks.
+    
+    V2 boards are distributed:
+    - Config file: .brainfile/brainfile.md (columns, rules, agent, types)
+    - Active tasks: .brainfile/board/*.md (individual files)
+    - Archived tasks: .brainfile/logs/*.md (individual files)
+    """
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    type: Literal["board"] = Field(default="board")
+    columns: list[ColumnConfig] = Field(
+        description="Column definitions (no embedded tasks in v2)"
+    )
+    strict: bool | None = Field(
+        default=False,
+        description="Enable strict type and column validation"
+    )
+    types: TypesConfig | None = Field(
+        default=None,
+        description="Custom task type definitions (strict mode)"
+    )
+    stats_config: dict | None = Field(
+        default=None,
+        alias="statsConfig",
+        description="Statistics and aggregation configuration"
+    )
+    # Inherited from BrainfileBase
+    agent: AgentInstructions | None = Field(default=None)
+    rules: Rules | None = Field(default=None)
+    metadata: dict | None = Field(default=None)
 
 
 # =============================================================================
