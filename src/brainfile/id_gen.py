@@ -11,18 +11,22 @@ import re
 
 from .models import Board
 
+DEFAULT_PREFIX = "task"
 
-def extract_task_id_number(task_id: str) -> int:
+
+def extract_task_id_number(task_id: str, prefix: str = DEFAULT_PREFIX) -> int:
     """
     Extract numeric ID from task ID string.
 
     Args:
-        task_id: Task ID like "task-123"
+        task_id: Task ID like "task-123", "task-42-1", or "epic-5"
+        prefix: Prefix to match (default: "task")
 
     Returns:
         Numeric portion or 0 if not parseable
     """
-    match = re.match(r"task-(\d+)", task_id)
+    escaped = re.escape(prefix)
+    match = re.search(rf"{escaped}-(\d+)", task_id)
     return int(match.group(1)) if match else 0
 
 
@@ -102,41 +106,47 @@ def generate_next_subtask_id(task_id: str, existing_subtask_ids: list[str]) -> s
     return generate_subtask_id(task_id, max_index + 1)
 
 
-def is_valid_task_id(task_id: str) -> bool:
+def is_valid_task_id(task_id: str, prefix: str = DEFAULT_PREFIX) -> bool:
     """
     Validate task ID format.
 
     Args:
         task_id: Task ID to validate
+        prefix: Prefix to match (default: "task")
 
     Returns:
-        True if valid format (task-N)
+        True if valid format ({prefix}-N)
     """
-    return bool(re.match(r"^task-\d+$", task_id))
+    escaped = re.escape(prefix)
+    return bool(re.match(rf"^{escaped}-\d+$", task_id))
 
 
-def is_valid_subtask_id(subtask_id: str) -> bool:
+def is_valid_subtask_id(subtask_id: str, prefix: str = DEFAULT_PREFIX) -> bool:
     """
     Validate subtask ID format.
 
     Args:
         subtask_id: Subtask ID to validate
+        prefix: Prefix to match (default: "task")
 
     Returns:
-        True if valid format (task-N-M)
+        True if valid format ({prefix}-N-M)
     """
-    return bool(re.match(r"^task-\d+-\d+$", subtask_id))
+    escaped = re.escape(prefix)
+    return bool(re.match(rf"^{escaped}-\d+-\d+$", subtask_id))
 
 
-def get_parent_task_id(subtask_id: str) -> str | None:
+def get_parent_task_id(subtask_id: str, prefix: str = DEFAULT_PREFIX) -> str | None:
     """
     Extract parent task ID from subtask ID.
 
     Args:
-        subtask_id: Subtask ID like "task-42-1"
+        subtask_id: Subtask ID like "task-42-1" or "epic-3-2"
+        prefix: Prefix to match (default: "task")
 
     Returns:
-        Parent task ID like "task-42", or None if invalid
+        Parent task ID like "{prefix}-42", or None if invalid
     """
-    match = re.match(r"^(task-\d+)-\d+$", subtask_id)
+    escaped = re.escape(prefix)
+    match = re.match(rf"^({escaped}-\d+)-\d+$", subtask_id)
     return match.group(1) if match else None

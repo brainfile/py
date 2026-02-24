@@ -19,6 +19,7 @@ from brainfile import (
     find_nearest_brainfile,
     find_primary_brainfile,
     is_brainfile_name,
+    watch_brainfiles,
 )
 
 
@@ -317,6 +318,70 @@ columns: []
         result = find_nearest_brainfile(str(subdir))
         # May or may not find one depending on actual filesystem
         # Just ensure it doesn't crash
+
+
+class TestWatchBrainfiles:
+    """Tests for watch_brainfiles."""
+
+    def test_watch_startup_success_for_directory(self, tmp_path):
+        """Valid directory returns active successful watcher result."""
+        result = watch_brainfiles(str(tmp_path), lambda event, file: None)
+
+        assert result.success is True
+        assert result.error is None
+        assert result.is_active() is True
+        assert result.isActive() is True
+
+        result.stop()
+
+        assert result.is_active() is False
+        assert result.isActive() is False
+
+    def test_watch_startup_returns_enoent_for_missing_directory(self, tmp_path):
+        """Missing directory returns ENOENT startup error result."""
+        missing_dir = tmp_path / "missing-brainfile-root"
+        result = watch_brainfiles(str(missing_dir), lambda event, file: None)
+
+        assert result.success is False
+        assert result.error is not None
+        assert result.error.code == "ENOENT"
+        assert "does not exist" in result.error.message
+        assert result.is_active() is False
+
+        result.stop()
+        assert result.is_active() is False
+
+    def test_watch_startup_returns_enotdir_for_file(self, tmp_path):
+        """File path returns ENOTDIR startup error result."""
+        file_path = tmp_path / "brainfile.md"
+        file_path.write_text("""---
+title: Not a directory
+columns: []
+---
+""")
+
+        result = watch_brainfiles(str(file_path), lambda event, file: None)
+
+        assert result.success is False
+        assert result.error is not None
+        assert result.error.code == "ENOTDIR"
+        assert "not a directory" in result.error.message
+        assert result.is_active() is False
+
+        result.stop()
+        assert result.is_active() is False
+
+    def test_watch_stop_is_idempotent(self, tmp_path):
+        """Stopping multiple times does not raise and stays inactive."""
+        result = watch_brainfiles(str(tmp_path), lambda event, file: None)
+
+        assert result.success is True
+
+        result.stop()
+        result.stop()
+        result.stop()
+
+        assert result.is_active() is False
 
 
 class TestDiscoveryOptions:

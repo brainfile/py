@@ -3,11 +3,18 @@
 import pytest
 
 from brainfile import (
+    BRAINFILE_BASENAME,
+    BRAINFILE_STATE_BASENAME,
     Board,
+    BrainfileResolutionKind,
     Column,
+    ContractPatch,
+    DOT_BRAINFILE_DIRNAME,
+    DOT_BRAINFILE_GITIGNORE_BASENAME,
     Priority,
     Subtask,
     Task,
+    TaskDocument,
     TemplateType,
 )
 
@@ -172,3 +179,33 @@ class TestTemplateTypeEnum:
         assert TemplateType.BUG.value == "bug"
         assert TemplateType.FEATURE.value == "feature"
         assert TemplateType.REFACTOR.value == "refactor"
+
+
+class TestTopLevelExportSurface:
+    """Regression tests for top-level exports."""
+
+    def test_task_document_exported(self):
+        doc = TaskDocument(task=Task(id="task-1", title="Task"), body="Body")
+        assert doc.task.id == "task-1"
+        assert "TaskDocument" in __import__("brainfile").__all__
+
+    def test_contract_patch_type_exported(self):
+        assert ContractPatch.__module__ == "brainfile.contract_ops"
+        assert "status" in ContractPatch.__annotations__
+        assert "ContractPatch" in __import__("brainfile").__all__
+
+    def test_file_constants_exported(self):
+        assert DOT_BRAINFILE_DIRNAME == ".brainfile"
+        assert BRAINFILE_BASENAME == "brainfile.md"
+        assert BRAINFILE_STATE_BASENAME == "state.json"
+        assert DOT_BRAINFILE_GITIGNORE_BASENAME == ".gitignore"
+
+        brainfile_module = __import__("brainfile")
+        assert "DOT_BRAINFILE_DIRNAME" in brainfile_module.__all__
+        assert "BRAINFILE_BASENAME" in brainfile_module.__all__
+        assert "BRAINFILE_STATE_BASENAME" in brainfile_module.__all__
+        assert "DOT_BRAINFILE_GITIGNORE_BASENAME" in brainfile_module.__all__
+
+    def test_brainfile_resolution_kind_exported(self):
+        assert BrainfileResolutionKind is str
+        assert "BrainfileResolutionKind" in __import__("brainfile").__all__

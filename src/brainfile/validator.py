@@ -1,11 +1,8 @@
 """
 Validator for Brainfile objects.
 
-This module provides validation functionality for Board objects
+This module provides validation functionality for Board and Journal objects
 to ensure structural integrity.
-
-Note: Journal and other types are community extensions and not
-validated by the official brainfile library.
 """
 
 from __future__ import annotations
@@ -472,6 +469,171 @@ class BrainfileValidator:
         return errors
 
     @staticmethod
+    def validate_journal(journal: Any) -> ValidationResult:
+        """
+        Validate a Journal object.
+
+        Args:
+            journal: The journal to validate
+
+        Returns:
+            ValidationResult with any errors found
+        """
+        errors: list[ValidationError] = []
+
+        if not journal:
+            errors.append(
+                ValidationError(
+                    path="",
+                    message="Journal is null or undefined",
+                )
+            )
+            return ValidationResult(valid=False, errors=errors)
+
+        # Validate title
+        if not isinstance(journal.get("title") if isinstance(journal, dict) else getattr(journal, "title", None), str):
+            errors.append(
+                ValidationError(
+                    path="title",
+                    message="Journal title must be a non-empty string",
+                )
+            )
+        elif isinstance(journal, dict):
+            if not journal.get("title", "").strip():
+                errors.append(
+                    ValidationError(
+                        path="title",
+                        message="Journal title must be a non-empty string",
+                    )
+                )
+        else:
+            if not getattr(journal, "title", "").strip():
+                errors.append(
+                    ValidationError(
+                        path="title",
+                        message="Journal title must be a non-empty string",
+                    )
+                )
+
+        # Validate entries
+        entries = journal.get("entries") if isinstance(journal, dict) else getattr(journal, "entries", None)
+        if not isinstance(entries, list):
+            errors.append(
+                ValidationError(
+                    path="entries",
+                    message="Entries must be an array",
+                )
+            )
+        else:
+            for index, entry in enumerate(entries):
+                entry_errors = BrainfileValidator.validate_journal_entry(
+                    entry, f"entries[{index}]"
+                )
+                errors.extend(entry_errors)
+
+        # Validate rules (optional)
+        rules = journal.get("rules") if isinstance(journal, dict) else getattr(journal, "rules", None)
+        if rules is not None:
+            rules_errors = BrainfileValidator.validate_rules(rules, "rules")
+            errors.extend(rules_errors)
+
+        return ValidationResult(valid=len(errors) == 0, errors=errors)
+
+    @staticmethod
+    def validate_journal_entry(entry: Any, path: str) -> list[ValidationError]:
+        """
+        Validate a JournalEntry object.
+
+        Args:
+            entry: The entry to validate
+            path: The path for error reporting
+
+        Returns:
+            Array of validation errors
+        """
+        errors: list[ValidationError] = []
+
+        if not entry:
+            errors.append(
+                ValidationError(
+                    path=path,
+                    message="Entry is null or undefined",
+                )
+            )
+            return errors
+
+        # Get fields
+        entry_id = entry.get("id") if isinstance(entry, dict) else getattr(entry, "id", None)
+        entry_title = entry.get("title") if isinstance(entry, dict) else getattr(entry, "title", None)
+        entry_created_at = entry.get("createdAt") if isinstance(entry, dict) else getattr(entry, "created_at", None)
+        entry_content = entry.get("content") if isinstance(entry, dict) else getattr(entry, "content", None)
+        entry_summary = entry.get("summary") if isinstance(entry, dict) else getattr(entry, "summary", None)
+        entry_mood = entry.get("mood") if isinstance(entry, dict) else getattr(entry, "mood", None)
+        entry_tags = entry.get("tags") if isinstance(entry, dict) else getattr(entry, "tags", None)
+
+        # Validate id
+        if not isinstance(entry_id, str) or not entry_id.strip():
+            errors.append(
+                ValidationError(
+                    path=f"{path}.id",
+                    message="Entry id must be a non-empty string",
+                )
+            )
+
+        # Validate title
+        if not isinstance(entry_title, str) or not entry_title.strip():
+            errors.append(
+                ValidationError(
+                    path=f"{path}.title",
+                    message="Entry title must be a non-empty string",
+                )
+            )
+
+        # Validate createdAt (required)
+        if not isinstance(entry_created_at, str) or not entry_created_at.strip():
+            errors.append(
+                ValidationError(
+                    path=f"{path}.createdAt",
+                    message="Entry createdAt must be an ISO 8601 timestamp string",
+                )
+            )
+
+        # Validate optional fields
+        if entry_content is not None and not isinstance(entry_content, str):
+            errors.append(
+                ValidationError(
+                    path=f"{path}.content",
+                    message="Entry content must be a string",
+                )
+            )
+
+        if entry_summary is not None and not isinstance(entry_summary, str):
+            errors.append(
+                ValidationError(
+                    path=f"{path}.summary",
+                    message="Entry summary must be a string",
+                )
+            )
+
+        if entry_mood is not None and not isinstance(entry_mood, str):
+            errors.append(
+                ValidationError(
+                    path=f"{path}.mood",
+                    message="Entry mood must be a string",
+                )
+            )
+
+        if entry_tags is not None and not isinstance(entry_tags, list):
+            errors.append(
+                ValidationError(
+                    path=f"{path}.tags",
+                    message="Entry tags must be an array",
+                )
+            )
+
+        return errors
+
+    @staticmethod
     def validate_brainfile(data: Any, filename: str | None = None) -> ValidationResult:
         """
         Validate any brainfile object with type detection.
@@ -510,14 +672,15 @@ class BrainfileValidator:
             )
 
         # Type-specific validation
-        # Official apps only support board type
         columns = data.get("columns") if isinstance(data, dict) else getattr(data, "columns", None)
+        entries = data.get("entries") if isinstance(data, dict) else getattr(data, "entries", None)
 
         if detected_type == BrainfileType.BOARD.value or (not detected_type and columns):
             board_result = BrainfileValidator.validate(data)
             errors.extend(board_result.errors)
-        # Note: Journal and other types are community extensions
-        # and are not validated by the official library
+        elif detected_type == BrainfileType.JOURNAL.value or entries:
+            journal_result = BrainfileValidator.validate_journal(data)
+            errors.extend(journal_result.errors)
 
         return ValidationResult(
             valid=len(errors) == 0,

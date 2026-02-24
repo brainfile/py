@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .id_gen import generate_next_subtask_id, generate_next_task_id
-from .models import Board, Column, Priority, Subtask, Task, TemplateType
+from .models import Board, Priority, Rule, Rules, RuleTypeLiteral, Subtask, Task, TemplateType
 from .query import find_column_by_id, find_task_by_id
 
 
@@ -1196,4 +1196,109 @@ def archive_tasks(
         results=results,
         success_count=success_count,
         failure_count=failure_count,
+    )
+
+
+def add_rule(
+    board: Board,
+    rule_type: RuleTypeLiteral,
+    rule_text: str,
+) -> BoardOperationResult:
+    """
+    Add a new rule to a board's rule collection.
+
+    Args:
+        board: Board to modify
+        rule_type: Rule category ('always', 'never', 'prefer', 'context')
+        rule_text: The rule text content
+
+    Returns:
+        BoardOperationResult with the updated board or error
+
+    Raises:
+        None - errors are returned in the result
+    """
+    if not rule_text or not rule_text.strip():
+        return BoardOperationResult(success=False, error="Rule text is required")
+
+    trimmed_rule = rule_text.strip()
+    existing_rules = (board.rules.__dict__.get(rule_type) or []) if board.rules else []
+
+    # Find the next ID (auto-increment)
+    next_id = max((rule.id for rule in existing_rules), default=0) + 1
+
+    new_rule = Rule(id=next_id, rule=trimmed_rule)
+    updated_rules_for_type = existing_rules + [new_rule]
+
+    # Create updated rules object
+    rules_dict = (board.rules.__dict__.copy() if board.rules else {})
+    rules_dict[rule_type] = updated_rules_for_type
+    updated_rules = Rules(**rules_dict)
+
+    return BoardOperationResult(
+        success=True,
+        board=board.model_copy(update={"rules": updated_rules}),
+    )
+
+
+def delete_rule(
+    board: Board,
+    rule_type: RuleTypeLiteral,
+    rule_id: int,
+) -> BoardOperationResult:
+    """
+    Remove a rule from a board by type and ID.
+
+    Args:
+        board: Board to modify
+        rule_type: Rule category ('always', 'never', 'prefer', 'context')
+        rule_id: ID of the rule to remove
+
+    Returns:
+        BoardOperationResult with the updated board or error
+    """
+    if not board.rules:
+        return BoardOperationResult(
+            success=False,
+            error=f"Rule type {rule_type} has no entries",
+        )
+
+    rules_for_type = board.rules.__dict__.get(rule_type) or []
+
+    if not rules_for_type:
+        return BoardOperationResult(
+            success=False,
+            error=f"Rule type {rule_type} has no entries",
+        )
+
+    # Check if rule exists
+    if not any(rule.id == rule_id for rule in rules_for_type):
+        return BoardOperationResult(
+            success=False,
+            error=f"Rule {rule_id} not found in {rule_type}",
+        )
+
+    # Filter out the rule with matching ID
+    updated_rules_for_type = [rule for rule in rules_for_type if rule.id != rule_id]
+
+    # Create updated rules object
+    rules_dict = board.rules.__dict__.copy()
+
+    if updated_rules_for_type:
+        rules_dict[rule_type] = updated_rules_for_type
+    else:
+        # Remove the key if no rules left for this type
+        rules_dict.pop(rule_type, None)
+
+    # Check if any rules remain at all
+    has_any_rules = any(rules_dict.get(k) for k in ["always", "never", "prefer", "context"])
+
+    if has_any_rules:
+        updated_rules = Rules(**rules_dict)
+    else:
+        updated_rules = None
+
+    return BoardOperationResult(
+        success=True,
+        board=board.model_copy(update={"rules": updated_rules}),
     )

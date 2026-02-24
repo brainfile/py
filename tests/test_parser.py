@@ -23,6 +23,26 @@ class TestBrainfileParser:
         assert result.type == BrainfileType.BOARD.value
         assert result.renderer == RendererType.KANBAN
 
+    def test_parse_with_errors_journal(self):
+        """Test parse_with_errors on journal content."""
+        content = """---
+title: Daily Journal
+type: journal
+entries:
+  - id: 2026-01-01
+    title: Standup
+    createdAt: 2026-01-01T09:00:00Z
+---
+"""
+        result = BrainfileParser.parse_with_errors(content)
+        assert result.error is None
+        assert result.data is not None
+        assert result.type == BrainfileType.JOURNAL.value
+        assert result.renderer == RendererType.TIMELINE
+        assert result.board is None
+        entries = result.data.entries if hasattr(result.data, "entries") else result.data["entries"]
+        assert len(entries) == 1
+
     def test_parse_missing_frontmatter_start(self):
         """Test parsing content without frontmatter start."""
         content = """title: Test

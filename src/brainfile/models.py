@@ -376,7 +376,7 @@ class TaskDocument(BaseModel):
 
 
 # =============================================================================
-# Board Types
+# Board and Journal Types
 # =============================================================================
 
 
@@ -424,6 +424,60 @@ class Board(BaseModel):
     columns: list[Column] = Field(default_factory=list)
     archive: list[Task] | None = None
     stats_config: StatsConfig | None = Field(default=None, alias="statsConfig")
+
+
+# =============================================================================
+# Journal Types
+# =============================================================================
+
+
+class JournalEntry(BaseModel):
+    """Journal entry definition."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    title: str
+    content: str | None = None
+    summary: str | None = None
+    mood: str | None = None
+    tags: list[str] | None = None
+    created_at: str = Field(alias="createdAt")
+    """ISO 8601 timestamp"""
+    updated_at: str | None = Field(default=None, alias="updatedAt")
+    """ISO 8601 timestamp"""
+
+
+class Journal(BaseModel):
+    """
+    Journal type - Time-ordered entries.
+
+    Extends shared brainfile fields with journal-specific entries.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    # Base fields (shared by all brainfile types)
+    title: str
+    """Brainfile title"""
+
+    type: Literal["journal"] | None = None
+    """Type discriminator"""
+
+    schema_url: str | None = Field(default=None, alias="schema")
+    """Schema URL for validation"""
+
+    protocol_version: str | None = Field(default=None, alias="protocolVersion")
+    """Protocol version (semver)"""
+
+    agent: AgentInstructions | None = None
+    """AI agent instructions"""
+
+    rules: Rules | None = None
+    """Project rules and guidelines"""
+
+    # Journal-specific fields
+    entries: list[JournalEntry] = Field(default_factory=list)
 
 
 # =============================================================================
@@ -515,10 +569,8 @@ class BoardConfig(BaseModel):
 # Union Type
 # =============================================================================
 
-# Note: Journal and other types are for community extensions only.
-# The official brainfile apps only support the board type.
-Brainfile = Board
-"""Union type for supported brainfile types (board only in official apps)."""
+Brainfile = Board | Journal
+"""Union type for currently modeled brainfile types."""
 
 
 # =============================================================================

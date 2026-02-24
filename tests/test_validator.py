@@ -290,6 +290,54 @@ class TestValidateStatsConfig:
         assert any("statsConfig" in e.path and "4" in e.message for e in result.errors)
 
 
+class TestValidateJournal:
+    """Tests for journal validation."""
+
+    def test_validate_valid_journal(self):
+        """Test validating a valid journal."""
+        journal = {
+            "title": "Daily Journal",
+            "entries": [
+                {
+                    "id": "2026-01-01",
+                    "title": "Standup",
+                    "createdAt": "2026-01-01T09:00:00Z",
+                }
+            ],
+        }
+        result = BrainfileValidator.validate_journal(journal)
+        assert result.valid is True
+        assert len(result.errors) == 0
+
+    def test_validate_journal_missing_entries(self):
+        """Test validating journal without entries."""
+        journal = {"title": "Daily Journal"}
+        result = BrainfileValidator.validate_journal(journal)
+        assert result.valid is False
+        assert any("entries" in e.path for e in result.errors)
+
+    def test_validate_journal_entry_missing_created_at(self):
+        """Test validating journal entry without createdAt."""
+        errors = BrainfileValidator.validate_journal_entry(
+            {"id": "2026-01-01", "title": "Standup"},
+            "entries[0]",
+        )
+        assert any("createdAt" in e.path for e in errors)
+
+    def test_validate_journal_entry_tags_not_array(self):
+        """Test validating journal entry with invalid tags."""
+        errors = BrainfileValidator.validate_journal_entry(
+            {
+                "id": "2026-01-01",
+                "title": "Standup",
+                "createdAt": "2026-01-01T09:00:00Z",
+                "tags": "not an array",
+            },
+            "entries[0]",
+        )
+        assert any("tags" in e.path and "array" in e.message.lower() for e in errors)
+
+
 class TestValidateBrainfile:
     """Tests for validate_brainfile (type detection + validation)."""
 
@@ -307,14 +355,39 @@ class TestValidateBrainfile:
 
     def test_validate_unknown_type(self):
         """Test validating data with unknown type (non-board) passes type detection."""
-        # Note: Journal and other types are community extensions
-        # They are detected but not validated by official library
         data = {
             "title": "My Custom Type",
             "type": "custom",
             "items": [],
         }
         result = BrainfileValidator.validate_brainfile(data)
-        # Type is detected
         assert result.type == "custom"
-        # But validation may not apply board-specific rules
+        assert result.valid is True
+
+    def test_validate_journal_type(self):
+        """Test validating and detecting journal type."""
+        data = {
+            "title": "Daily Journal",
+            "type": "journal",
+            "entries": [
+                {
+                    "id": "2026-01-01",
+                    "title": "Standup",
+                    "createdAt": "2026-01-01T09:00:00Z",
+                }
+            ],
+        }
+        result = BrainfileValidator.validate_brainfile(data)
+        assert result.valid is True
+        assert result.type == "journal"
+
+    def test_validate_journal_entry_error_from_brainfile(self):
+        """Test journal entry validation through validate_brainfile."""
+        data = {
+            "title": "Daily Journal",
+            "type": "journal",
+            "entries": [{"id": "2026-01-01", "title": "Standup"}],
+        }
+        result = BrainfileValidator.validate_brainfile(data)
+        assert result.valid is False
+        assert any("entries[0].createdAt" == e.path for e in result.errors)

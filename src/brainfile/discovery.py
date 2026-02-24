@@ -7,12 +7,14 @@ Used by CLI, editor extensions, and other tools.
 
 from __future__ import annotations
 
+import errno
 import os
 import re
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
 from .parser import BrainfileParser
 
@@ -125,6 +127,41 @@ class DiscoveryResult:
 
     discovered_at: datetime = field(default_factory=datetime.now)
     """Discovery timestamp"""
+
+
+@dataclass
+class WatchError:
+    """Represents an error during file watching."""
+
+    code: Literal["ENOENT", "EACCES", "ENOTDIR", "EMFILE", "UNKNOWN"]
+    """Error code"""
+
+    message: str
+    """Error message"""
+
+    path: str
+    """Path that caused the error"""
+
+
+@dataclass
+class WatchResult:
+    """Result of starting a watch operation."""
+
+    success: bool
+    """Whether watch startup succeeded"""
+
+    stop: Callable[[], None]
+    """Stop watching and release resources"""
+
+    is_active: Callable[[], bool]
+    """Whether the watcher is currently active"""
+
+    error: WatchError | None = None
+    """Startup error, if any"""
+
+    def isActive(self) -> bool:
+        """Compatibility alias matching the core watcher API."""
+        return self.is_active()
 
 
 def is_brainfile_name(filename: str) -> bool:
@@ -436,7 +473,8 @@ def find_nearest_brainfile(start_dir: str | None = None) -> DiscoveredFile | Non
 def watch_brainfiles(
     root_dir: str,
     callback: Callable[[str, DiscoveredFile | str], None],
-) -> Callable[[], None]:
+    on_error: Callable[[WatchError], None] | None = None,
+) -> WatchResult:
     """
     Watch a directory for brainfile changes.
 
@@ -446,63 +484,179 @@ def watch_brainfiles(
         root_dir: The directory to watch
         callback: Called when files change with (event_type, file) where
                   event_type is 'add', 'change', or 'unlink'
+        on_error: Optional callback for non-fatal runtime watcher errors
 
     Returns:
-        A function to stop watching
+        Watch startup result including status, stop function, and error state
 
     Example:
         >>> def on_change(event, file):
         ...     print(f"{event}: {file}")
-        >>> stop = watch_brainfiles("/path/to/project", on_change)
-        >>> # Later...
-        >>> stop()  # Stop watching
+        >>> result = watch_brainfiles("/path/to/project", on_change)
+        >>> if result.success:
+        ...     # Later...
+        ...     result.stop()
     """
+    absolute_root = os.path.abspath(root_dir)
+
+    def failed(
+        code: Literal["ENOENT", "EACCES", "ENOTDIR", "EMFILE", "UNKNOWN"],
+        message: str,
+    ) -> WatchResult:
+        return WatchResult(
+            success=False,
+            stop=lambda: None,
+            is_active=lambda: False,
+            error=WatchError(
+                code=code,
+                message=message,
+                path=absolute_root,
+            ),
+        )
+
     try:
         from watchdog.events import FileSystemEventHandler
         from watchdog.observers import Observer
-    except ImportError as e:
-        raise ImportError(
-            "watchdog is required for file watching. "
-            "Install it with: pip install watchdog"
-        ) from e
+    except ImportError:
+        return failed(
+            "UNKNOWN",
+            "watchdog is required for file watching. Install it with: pip install watchdog",
+        )
 
-    absolute_root = os.path.abspath(root_dir)
+    # Validate directory exists and is accessible
+    try:
+        if not os.path.isdir(absolute_root):
+            if os.path.exists(absolute_root):
+                return failed("ENOTDIR", f"Path is not a directory: {absolute_root}")
+            return failed("ENOENT", f"Directory does not exist: {absolute_root}")
+        os.listdir(absolute_root)
+    except PermissionError:
+        return failed("EACCES", f"Permission denied: {absolute_root}")
+    except OSError as err:
+        if err.errno == errno.ENOENT:
+            return failed("ENOENT", f"Directory does not exist: {absolute_root}")
+        if err.errno == errno.EACCES:
+            return failed("EACCES", f"Permission denied: {absolute_root}")
+        return failed("UNKNOWN", f"Cannot access directory: {err}")
+
+    active = False
+    state_lock = threading.Lock()
+    observer: Observer | None = None
+
+    def is_active() -> bool:
+        with state_lock:
+            return active
+
+    def report_runtime_error(code: Literal["ENOENT", "EACCES", "ENOTDIR", "EMFILE", "UNKNOWN"], message: str, error_path: str) -> None:
+        if on_error is None:
+            return
+        try:
+            on_error(WatchError(code=code, message=message, path=error_path))
+        except Exception:
+            return
 
     class BrainfileHandler(FileSystemEventHandler):
-        def on_created(self, event):
+        def _handle(self, event, event_type: str) -> None:
             if event.is_directory:
                 return
+            if not is_active():
+                return
+
             filename = os.path.basename(event.src_path)
-            if is_brainfile_name(filename):
+            if not is_brainfile_name(filename):
+                return
+
+            try:
+                if event_type == "unlink":
+                    callback("unlink", event.src_path)
+                    return
+
                 relative_path = os.path.relpath(event.src_path, absolute_root)
                 metadata = _parse_file_metadata(event.src_path, relative_path)
                 if metadata:
-                    callback("add", metadata)
+                    callback(event_type, metadata)
+            except OSError as err:
+                error_code: Literal["ENOENT", "EACCES", "ENOTDIR", "EMFILE", "UNKNOWN"] = (
+                    "ENOENT"
+                    if err.errno == errno.ENOENT
+                    else "EACCES"
+                    if err.errno == errno.EACCES
+                    else "UNKNOWN"
+                )
+                report_runtime_error(
+                    error_code,
+                    f"Error processing file event: {err}",
+                    event.src_path,
+                )
+            except Exception as err:
+                report_runtime_error(
+                    "UNKNOWN",
+                    f"Error processing file event: {err}",
+                    event.src_path,
+                )
+
+        def on_created(self, event):
+            self._handle(event, "add")
 
         def on_modified(self, event):
-            if event.is_directory:
-                return
-            filename = os.path.basename(event.src_path)
-            if is_brainfile_name(filename):
-                relative_path = os.path.relpath(event.src_path, absolute_root)
-                metadata = _parse_file_metadata(event.src_path, relative_path)
-                if metadata:
-                    callback("change", metadata)
+            self._handle(event, "change")
 
         def on_deleted(self, event):
-            if event.is_directory:
+            self._handle(event, "unlink")
+
+    try:
+        observer = Observer()
+        handler = BrainfileHandler()
+        observer.schedule(handler, absolute_root, recursive=True)
+        observer.start()
+    except OSError as err:
+        code: Literal["ENOENT", "EACCES", "ENOTDIR", "EMFILE", "UNKNOWN"] = (
+            "EMFILE"
+            if err.errno == errno.EMFILE
+            else "EACCES"
+            if err.errno == errno.EACCES
+            else "UNKNOWN"
+        )
+        message = (
+            "Too many open files - close some watchers first"
+            if code == "EMFILE"
+            else f"Permission denied watching: {absolute_root}"
+            if code == "EACCES"
+            else f"Failed to watch directory: {err}"
+        )
+        return failed(code, message)
+    except Exception as err:
+        return failed("UNKNOWN", f"Failed to watch directory: {err}")
+
+    with state_lock:
+        active = True
+
+    def stop() -> None:
+        nonlocal active, observer
+
+        observer_to_stop: Observer | None = None
+        with state_lock:
+            if not active:
                 return
-            filename = os.path.basename(event.src_path)
-            if is_brainfile_name(filename):
-                callback("unlink", event.src_path)
+            active = False
+            observer_to_stop = observer
+            observer = None
 
-    observer = Observer()
-    handler = BrainfileHandler()
-    observer.schedule(handler, absolute_root, recursive=True)
-    observer.start()
+        if observer_to_stop is None:
+            return
 
-    def stop():
-        observer.stop()
-        observer.join()
+        try:
+            observer_to_stop.stop()
+            if (
+                observer_to_stop.is_alive()
+                and threading.current_thread() is not observer_to_stop
+            ):
+                observer_to_stop.join()
+        except Exception:
+            return
 
-    return stop
+    return WatchResult(
+        success=True,
+        stop=stop,
+        is_active=is_active,
+    )

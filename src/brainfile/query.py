@@ -278,3 +278,53 @@ def get_overdue_tasks(
             continue
 
     return results
+
+
+def find_completion_column(board: Board) -> Column | None:
+    """
+    Find the column designated for completed tasks.
+
+    First checks for explicit completionColumn property, then falls back to
+    name-based pattern matching, and finally returns the last column.
+
+    Args:
+        board: Board to search
+
+    Returns:
+        The completion column or None if no columns exist
+    """
+    if not board.columns:
+        return None
+
+    # First, check for explicit completionColumn property
+    for column in board.columns:
+        if column.completionColumn:
+            return column
+
+    # Fall back to name-based detection (common completion column patterns)
+    import re
+
+    completion_patterns = [re.compile(r"done", re.IGNORECASE), re.compile(r"complete", re.IGNORECASE), re.compile(r"finished", re.IGNORECASE), re.compile(r"closed", re.IGNORECASE)]
+
+    for pattern in completion_patterns:
+        for column in board.columns:
+            if pattern.search(column.title) or pattern.search(column.id):
+                return column
+
+    # Fall back to the last column (common Kanban convention)
+    return board.columns[-1]
+
+
+def is_completion_column(board: Board, column_id: str) -> bool:
+    """
+    Check if a given column is the completion column.
+
+    Args:
+        board: Board to check
+        column_id: Column ID to verify
+
+    Returns:
+        True if the column is the completion column, False otherwise
+    """
+    completion_col = find_completion_column(board)
+    return completion_col is not None and completion_col.id == column_id

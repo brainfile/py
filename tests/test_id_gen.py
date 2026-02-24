@@ -32,6 +32,21 @@ class TestExtractTaskIdNumber:
         assert extract_task_id_number("") == 0
         assert extract_task_id_number("task-") == 0
 
+    def test_extract_subtask_id(self):
+        """Test extracting from valid subtask IDs."""
+        assert extract_task_id_number("task-42-1") == 42
+        assert extract_task_id_number("task-5-10") == 5
+
+    def test_extract_with_custom_prefix(self):
+        """Test extracting with custom prefix."""
+        assert extract_task_id_number("epic-7", "epic") == 7
+        assert extract_task_id_number("epic-9-2", "epic") == 9
+        assert extract_task_id_number("task-9", "epic") == 0
+
+    def test_extract_with_escaped_prefix(self):
+        """Test extracting with prefixes containing regex chars."""
+        assert extract_task_id_number("type.v2-11", "type.v2") == 11
+
 
 class TestGetMaxTaskIdNumber:
     """Tests for get_max_task_id_number."""
@@ -118,6 +133,17 @@ class TestIsValidTaskId:
         assert is_valid_task_id("task-abc") is False
         assert is_valid_task_id("task-1-1") is False  # This is a subtask ID
 
+    def test_custom_prefix(self):
+        """Test task ID validation with custom prefix."""
+        assert is_valid_task_id("epic-1", "epic") is True
+        assert is_valid_task_id("epic-123", "epic") is True
+        assert is_valid_task_id("task-1", "epic") is False
+
+    def test_custom_prefix_with_regex_chars(self):
+        """Test task ID validation with escaped custom prefix."""
+        assert is_valid_task_id("type.v2-1", "type.v2") is True
+        assert is_valid_task_id("typeXv2-1", "type.v2") is False
+
 
 class TestIsValidSubtaskId:
     """Tests for is_valid_subtask_id."""
@@ -133,6 +159,17 @@ class TestIsValidSubtaskId:
         assert is_valid_subtask_id("task-1-") is False
         assert is_valid_subtask_id("") is False
 
+    def test_custom_prefix(self):
+        """Test subtask ID validation with custom prefix."""
+        assert is_valid_subtask_id("epic-1-1", "epic") is True
+        assert is_valid_subtask_id("epic-123-456", "epic") is True
+        assert is_valid_subtask_id("task-1-1", "epic") is False
+
+    def test_custom_prefix_with_regex_chars(self):
+        """Test subtask ID validation with escaped custom prefix."""
+        assert is_valid_subtask_id("type.v2-1-1", "type.v2") is True
+        assert is_valid_subtask_id("typeXv2-1-1", "type.v2") is False
+
 
 class TestGetParentTaskId:
     """Tests for get_parent_task_id."""
@@ -147,3 +184,13 @@ class TestGetParentTaskId:
         assert get_parent_task_id("task-1") is None
         assert get_parent_task_id("invalid") is None
         assert get_parent_task_id("") is None
+
+    def test_custom_prefix(self):
+        """Test extracting parent with custom prefix."""
+        assert get_parent_task_id("epic-1-1", "epic") == "epic-1"
+        assert get_parent_task_id("epic-42-5", "epic") == "epic-42"
+        assert get_parent_task_id("task-1-1", "epic") is None
+
+    def test_custom_prefix_with_regex_chars(self):
+        """Test extracting parent with escaped custom prefix."""
+        assert get_parent_task_id("type.v2-8-3", "type.v2") == "type.v2-8"
