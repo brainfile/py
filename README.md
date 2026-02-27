@@ -1,6 +1,14 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/brainfile/core/main/logo.png" alt="Brainfile Logo" width="128" height="128">
+</p>
+
 # brainfile
 
-Python port of the @brainfile/core TypeScript library for parsing, manipulating, and serializing brainfile.md kanban boards.
+**The Python engine behind [Brainfile](https://brainfile.md).**
+
+This library provides the core logic for managing Brainfile v2 projects: reading/writing task files, managing contracts, validating boards, and querying task state. It is the Python equivalent of [@brainfile/core](https://github.com/brainfile/core) with full API parity.
+
+Used by [Cecli](https://github.com/dwash96/cecli) and other tools that need programmatic access to Brainfile workspaces.
 
 ## Installation
 
@@ -8,205 +16,205 @@ Python port of the @brainfile/core TypeScript library for parsing, manipulating,
 pip install brainfile
 ```
 
-## Features
+Or with [uv](https://github.com/astral-sh/uv):
 
-- Parse and serialize brainfile.md YAML frontmatter
-- Full Pydantic v2 data models with type safety
-- Immutable board operations (add, update, delete, move tasks)
-- Query functions for searching and filtering
-- Board diffing and hashing for real-time sync
-- File discovery and watching
-- Linting with auto-fix capabilities
-- Built-in task templates
-- **V2 Protocol Support**: Per-task markdown files, distributed board architecture, and agent contracts.
+```bash
+uv add brainfile
+```
 
-## Quick Start (V1 - Single File)
+## v2 Architecture
+
+Brainfile v2 uses a directory-based structure. Each task is its own markdown file.
+
+```
+.brainfile/
+├── brainfile.md          # Board config (columns, types, rules)
+├── board/                # Active tasks
+│   ├── task-1.md
+│   └── task-2.md
+└── logs/                 # Completed tasks (history)
+    └── task-0.md
+```
+
+## Quick Start
 
 ```python
-from brainfile import Brainfile
+from brainfile import ensureV2Dirs, addTaskFile, readTasksDir, completeTaskFile
+
+# Initialize workspace
+dirs = ensureV2Dirs(".brainfile/brainfile.md")
+
+# Add a task
+result = addTaskFile(
+    dirs.boardDir,
+    {"title": "Implement auth", "column": "in-progress", "priority": "high"},
+    body="## Description\nAdd JWT authentication to the API.\n",
+)
+print(result["task"].id)  # "task-1"
+
+# List all active tasks
+for doc in readTasksDir(dirs.boardDir):
+    t = doc.task
+    print(f"{t.id}: {t.title} [{t.column}]")
+
+# Complete a task (moves to logs/)
+completeTaskFile(result["filePath"], dirs.logsDir)
+```
+
+## Task File Operations
+
+Read and write individual task files.
+
+```python
+from brainfile import readTaskFile, writeTaskFile, findV2Task, getV2Dirs
+
+# Read a single task
+doc = readTaskFile(".brainfile/board/task-1.md")
+print(doc.task.title)
+print(doc.body)  # Markdown content below frontmatter
+
+# Find a task across board and logs
+dirs = getV2Dirs(".brainfile/brainfile.md")
+result = findV2Task(dirs, "task-1", searchLogs=True)
+if result:
+    print(result["doc"].task.title, "in", "logs" if result["isLog"] else "board")
+```
+
+## Contracts
+
+Tasks can carry formal contracts for AI agent coordination: deliverables, validation commands, constraints, and feedback for rework.
+
+```python
+from brainfile import readTaskFile, writeTaskFile, Contract, Deliverable
+
+doc = readTaskFile(".brainfile/board/task-1.md")
+task = doc.task
+
+# Attach a contract
+task.contract = Contract(
+    status="ready",
+    deliverables=[
+        Deliverable(path="src/auth.py", description="JWT auth module"),
+        Deliverable(path="tests/test_auth.py", description="Unit tests"),
+    ],
+    validation={"commands": ["pytest tests/test_auth.py"]},
+    constraints=["Use PyJWT library", "Token expiry must be configurable"],
+)
+
+writeTaskFile(".brainfile/board/task-1.md", task, doc.body)
+```
+
+### Contract Lifecycle
+
+```
+ready  →  in_progress  →  delivered  →  done
+                │                         │
+                └─────────→  failed  ←────┘
+                             (add feedback, reset to ready)
+```
+
+```python
+from brainfile import setTaskContractStatus
+
+# Agent picks up work
+setTaskContractStatus(board, "task-1", "in_progress")
+
+# Agent delivers
+setTaskContractStatus(board, "task-1", "delivered")
+
+# PM validates
+setTaskContractStatus(board, "task-1", "done")
+```
+
+## Board Operations (V1)
+
+Immutable operations on in-memory board objects. Useful for single-file workflows or building custom tools.
+
+```python
+from brainfile import Brainfile, add_task, move_task, patch_task, TaskInput, TaskPatch
 
 # Parse a brainfile
-content = """---
-title: My Project
-columns:
-  - id: todo
-    title: To Do
-    tasks:
-      - id: task-1
-        title: First task
----
-"""
-
-result = Brainfile.parse(content)
+result = Brainfile.parse(markdown_content)
 board = result.board
 
 # Add a task
-from brainfile import add_task, TaskInput
+result = add_task(board, "todo", TaskInput(title="New task", priority="high"))
+board = result.board
 
-result = add_task(board, "todo", TaskInput(title="New task"))
-updated_board = result.board
+# Move between columns
+result = move_task(board, "task-1", "todo", "in-progress")
 
-# Serialize back to markdown
-markdown = Brainfile.serialize(updated_board)
+# Patch fields
+result = patch_task(board, "task-1", TaskPatch(tags=["urgent"], assignee="codex"))
+
+# Serialize back
+output = Brainfile.serialize(board)
 ```
 
-## Quick Start (V2 - Distributed)
-
-V2 uses a `.brainfile/` directory with individual task files for better Git hygiene.
-
-```python
-from brainfile import ensureV2Dirs, addTaskFile, completeTaskFile
-
-# 1. Setup V2 workspace
-dirs = ensureV2Dirs(".brainfile/brainfile.md")
-
-# 2. Add a new task file to board/
-result = addTaskFile(
-    dirs.boardDir, 
-    {"title": "Implement feature", "column": "todo"},
-    body="## Description\nDetailed implementation notes."
-)
-task_path = result["filePath"]
-
-# 3. Complete a task (moves it to logs/ and adds completedAt)
-completeTaskFile(task_path, dirs.logsDir)
-```
-
-## API Reference
-
-### Parsing
-
-```python
-from brainfile import BrainfileParser
-
-# Parse to dict
-data = BrainfileParser.parse(content)
-
-# Parse to Board model with error handling
-result = BrainfileParser.parse_with_errors(content)
-if result.error:
-    print(f"Error: {result.error}")
-else:
-    board = result.board
-```
-
-### Operations
-
-All operations are immutable and return a new board:
-
-```python
-from brainfile import (
-    add_task,
-    update_task,
-    delete_task,
-    move_task,
-    patch_task,
-    archive_task,
-    restore_task,
-    TaskInput,
-    TaskPatch,
-)
-
-# Add a task
-result = add_task(board, "column-id", TaskInput(title="New task"))
-
-# Update a task
-result = update_task(board, "column-id", "task-id", "New Title", "New Description")
-
-# Move a task
-result = move_task(board, "task-id", "from-column", "to-column", position=0)
-
-# Patch specific fields
-result = patch_task(board, "task-id", TaskPatch(priority="high", tags=["urgent"]))
-```
-
-### Queries
+## Queries
 
 ```python
 from brainfile import (
     find_task_by_id,
     get_all_tasks,
     get_tasks_by_tag,
-    get_tasks_by_priority,
+    get_tasks_by_assignee,
     search_tasks,
 )
 
-# Find a specific task
 task_info = find_task_by_id(board, "task-1")
-
-# Get all tasks with a tag
-tasks = get_tasks_by_tag(board, "urgent")
-
-# Search tasks by text
-tasks = search_tasks(board, "bug fix")
+urgent = get_tasks_by_tag(board, "urgent")
+results = search_tasks(board, "auth")
 ```
 
-### Validation and Linting
+## Validation and Linting
 
 ```python
 from brainfile import BrainfileValidator, BrainfileLinter, LintOptions
 
-# Validate a board
+# Validate board structure
 result = BrainfileValidator.validate(board)
-if not result.valid:
-    for error in result.errors:
-        print(f"{error.path}: {error.message}")
+for error in result.errors:
+    print(f"{error.path}: {error.message}")
 
-# Lint content with auto-fix
+# Lint with auto-fix
 result = BrainfileLinter.lint(content, LintOptions(auto_fix=True))
-if result.fixed_content:
-    print("Fixed content:", result.fixed_content)
 ```
 
-### File Discovery
+## File Discovery
 
 ```python
-from brainfile import discover, find_nearest_brainfile
+from brainfile import discover, find_nearest_brainfile, isV2
 
-# Discover all brainfiles in a directory
+# Find brainfiles in a project
 result = discover("/path/to/project")
-for file in result.files:
-    print(f"{file.name}: {file.item_count} tasks")
+for f in result.files:
+    print(f"{f.name}: {f.item_count} tasks")
 
-# Find nearest brainfile (walks up directory tree)
-brainfile = find_nearest_brainfile()
+# Walk up to find nearest brainfile
+path = find_nearest_brainfile()
+
+# Check if a workspace is v2
+if isV2(".brainfile/brainfile.md"):
+    print("V2 workspace detected")
 ```
 
-### V2 Task Operations
+## Ecosystem
 
-V2 operations handle individual files in `.brainfile/board/` and `.brainfile/logs/`.
+| Package | Description |
+|---------|-------------|
+| [brainfile (Python)](https://github.com/brainfile/py) | This library |
+| [@brainfile/core](https://github.com/brainfile/core) | TypeScript core library |
+| [@brainfile/cli](https://github.com/brainfile/cli) | CLI with TUI and MCP server |
+| [Protocol](https://github.com/brainfile/protocol) | Specification and JSON Schema |
 
-```python
-from brainfile import addTaskFile, moveTaskFile, completeTaskFile, appendLog
+## Development
 
-# Create a task file
-res = addTaskFile(board_dir, {"title": "Task 1", "column": "todo"})
-
-# Move to another column
-moveTaskFile(res["filePath"], "done")
-
-# Append a log entry
-appendLog(res["filePath"], "Work in progress", agent="otto")
-
-# Complete and move to logs/
-completeTaskFile(res["filePath"], logs_dir)
-```
-
-### Agent Contracts (V2)
-
-Tasks can have formal contracts for AI agents.
-
-```python
-from brainfile import setTaskContract, Contract, Deliverable
-
-contract = Contract(
-    status="ready",
-    deliverables=[Deliverable(type="file", path="src/main.py")],
-    constraints=["Must use Python 3.10+"]
-)
-
-# Apply to a task in a board model
-setTaskContract(board, "task-1", contract)
+```bash
+git clone https://github.com/brainfile/py.git
+cd py
+uv sync --dev
+uv run pytest
 ```
 
 ## License
