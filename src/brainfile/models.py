@@ -519,8 +519,9 @@ class TypeEntry(BaseModel):
         default=True,
         description="Whether tasks of this type can be marked complete"
     )
-    schema: str | None = Field(
+    schema_url: str | None = Field(
         default=None,
+        alias="schema",
         description="Optional JSON schema URI for type validation"
     )
 
