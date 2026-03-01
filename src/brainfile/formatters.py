@@ -10,13 +10,12 @@ This mirrors TS core v2 ``formatters.ts``.
 
 from __future__ import annotations
 
-# ruff: noqa: N802,N803,N815
 from typing import Literal, TypedDict
 
 from .models import Subtask, Task
 
 
-class GitHubIssuePayload(TypedDict, total=False):
+class GitHubIssuePayload(TypedDict, total=False):  # noqa: N815
     """Payload for creating a GitHub Issue."""
 
     title: str
@@ -28,39 +27,39 @@ class GitHubIssuePayload(TypedDict, total=False):
 class GitHubFormatOptions(TypedDict, total=False):
     """Options for formatting a task for GitHub."""
 
-    includeMeta: bool
-    includeSubtasks: bool
-    includeRelatedFiles: bool
-    resolvedBy: str
-    resolvedByPR: str
-    fromColumn: str
-    boardTitle: str
-    extraLabels: list[str]
-    includeTaskId: bool
+    include_meta: bool
+    include_subtasks: bool
+    include_related_files: bool
+    resolved_by: str
+    resolved_by_pr: str
+    from_column: str
+    board_title: str
+    extra_labels: list[str]
+    include_task_id: bool
 
 
-class LinearIssuePayload(TypedDict, total=False):
+class LinearIssuePayload(TypedDict, total=False):  # noqa: N815
     """Payload for creating a Linear Issue."""
 
     title: str
     description: str
     priority: int | None
-    labelNames: list[str] | None
-    stateName: str
+    labelNames: list[str] | None  # noqa: N815
+    stateName: str  # noqa: N815
 
 
 class LinearFormatOptions(TypedDict, total=False):
     """Options for formatting a task for Linear."""
 
-    includeMeta: bool
-    includeSubtasks: bool
-    includeRelatedFiles: bool
-    resolvedBy: str
-    resolvedByPR: str
-    fromColumn: str
-    boardTitle: str
-    stateName: str
-    includeTaskId: bool
+    include_meta: bool
+    include_subtasks: bool
+    include_related_files: bool
+    resolved_by: str
+    resolved_by_pr: str
+    from_column: str
+    board_title: str
+    state_name: str
+    include_task_id: bool
 
 
 def _format_subtasks_markdown(subtasks: list[Subtask]) -> str:
@@ -75,14 +74,15 @@ def _format_metadata_section(
     """Format task metadata as a markdown section."""
     lines: list[str] = []
 
-    if context.get("boardTitle"):
-        lines.append(f"**Board:** {context['boardTitle']}")
+    if context.get("board_title"):
+        lines.append(f"**Board:** {context['board_title']}")
 
-    if context.get("fromColumn"):
-        lines.append(f"**Column:** {context['fromColumn']}")
+    if context.get("from_column"):
+        lines.append(f"**Column:** {context['from_column']}")
 
     if task.priority:
-        lines.append(f"**Priority:** {task.priority.value if hasattr(task.priority, 'value') else task.priority}")
+        p_val = task.priority.value if hasattr(task.priority, "value") else task.priority
+        lines.append(f"**Priority:** {p_val}")
 
     if task.assignee:
         lines.append(f"**Assignee:** {task.assignee}")
@@ -106,34 +106,34 @@ def _format_related_files_section(files: list[str]) -> str:
 
 
 def _format_resolution_section(
-    resolvedBy: str | None = None, resolvedByPR: str | None = None
+    resolved_by: str | None = None, resolved_by_pr: str | None = None
 ) -> str:
     """Format resolution information."""
     lines: list[str] = ["## Resolution"]
 
-    if resolvedByPR:
-        lines.append(f"\n**Pull Request:** {resolvedByPR}")
+    if resolved_by_pr:
+        lines.append(f"\n**Pull Request:** {resolved_by_pr}")
 
-    if resolvedBy:
-        lines.append(f"\n**Commit:** {resolvedBy}")
+    if resolved_by:
+        lines.append(f"\n**Commit:** {resolved_by}")
 
     return "".join(lines)
 
 
-def formatTaskForGitHub(
+def format_task_for_github(
     task: Task, options: GitHubFormatOptions | None = None
 ) -> GitHubIssuePayload:
     """Format a Brainfile task as a GitHub Issue payload."""
     options = options or {}
-    include_meta = options.get("includeMeta", True)
-    include_subtasks = options.get("includeSubtasks", True)
-    include_related_files = options.get("includeRelatedFiles", True)
-    resolved_by = options.get("resolvedBy")
-    resolved_by_pr = options.get("resolvedByPR")
-    from_column = options.get("fromColumn")
-    board_title = options.get("boardTitle")
-    extra_labels = options.get("extraLabels", [])
-    include_task_id = options.get("includeTaskId", True)
+    include_meta = options.get("include_meta", True)
+    include_subtasks = options.get("include_subtasks", True)
+    include_related_files = options.get("include_related_files", True)
+    resolved_by = options.get("resolved_by")
+    resolved_by_pr = options.get("resolved_by_pr")
+    from_column = options.get("from_column")
+    board_title = options.get("board_title")
+    extra_labels = options.get("extra_labels", [])
+    include_task_id = options.get("include_task_id", True)
 
     # Build title
     title = f"[{task.id}] {task.title}" if include_task_id else task.title
@@ -152,7 +152,7 @@ def formatTaskForGitHub(
     # Metadata section
     if include_meta:
         meta = _format_metadata_section(
-            task, {"fromColumn": from_column, "boardTitle": board_title}
+            task, {"from_column": from_column, "board_title": board_title}
         )
         if meta:
             sections.append(meta)
@@ -193,7 +193,7 @@ def _map_priority_to_linear(priority: str | None) -> int | None:
     """Map Brainfile priority to Linear priority number."""
     if not priority:
         return None
-    
+
     p = priority.lower()
     if p == "critical":
         return 1
@@ -206,20 +206,20 @@ def _map_priority_to_linear(priority: str | None) -> int | None:
     return 0
 
 
-def formatTaskForLinear(
+def format_task_for_linear(
     task: Task, options: LinearFormatOptions | None = None
 ) -> LinearIssuePayload:
     """Format a Brainfile task as a Linear Issue payload."""
     options = options or {}
-    include_meta = options.get("includeMeta", True)
-    include_subtasks = options.get("includeSubtasks", True)
-    include_related_files = options.get("includeRelatedFiles", True)
-    resolved_by = options.get("resolvedBy")
-    resolved_by_pr = options.get("resolvedByPR")
-    from_column = options.get("fromColumn")
-    board_title = options.get("boardTitle")
-    state_name = options.get("stateName", "Done")
-    include_task_id = options.get("includeTaskId", False)
+    include_meta = options.get("include_meta", True)
+    include_subtasks = options.get("include_subtasks", True)
+    include_related_files = options.get("include_related_files", True)
+    resolved_by = options.get("resolved_by")
+    resolved_by_pr = options.get("resolved_by_pr")
+    from_column = options.get("from_column")
+    board_title = options.get("board_title")
+    state_name = options.get("state_name", "Done")
+    include_task_id = options.get("include_task_id", False)
 
     # Build title
     title = f"[{task.id}] {task.title}" if include_task_id else task.title
@@ -238,7 +238,7 @@ def formatTaskForLinear(
     # Metadata section
     if include_meta:
         meta = _format_metadata_section(
-            task, {"fromColumn": from_column, "boardTitle": board_title}
+            task, {"from_column": from_column, "board_title": board_title}
         )
         if meta:
             sections.append(meta)
@@ -254,8 +254,12 @@ def formatTaskForLinear(
     # Footer
     sections.append("---\n*Archived from brainfile.md*")
 
-    p_val = task.priority.value if task.priority and hasattr(task.priority, "value") else task.priority
-    
+    p_val = (
+        task.priority.value
+        if task.priority and hasattr(task.priority, "value")
+        else task.priority
+    )
+
     return {
         "title": title,
         "description": "\n\n".join(sections),

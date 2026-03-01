@@ -39,9 +39,7 @@ entries:
         assert result.data is not None
         assert result.type == BrainfileType.JOURNAL.value
         assert result.renderer == RendererType.TIMELINE
-        assert result.board is None
-        entries = result.data.entries if hasattr(result.data, "entries") else result.data["entries"]
-        assert len(entries) == 1
+        assert len(result.data["entries"]) == 1
 
     def test_parse_missing_frontmatter_start(self):
         """Test parsing content without frontmatter start."""
@@ -70,9 +68,9 @@ columns:
     title: Invalid: Unquoted: Content
 ---
 """
-        result = BrainfileParser.parse_with_errors(content)
         # May succeed depending on YAML parser tolerance
         # The important thing is it doesn't crash
+        BrainfileParser.parse_with_errors(content)
 
     def test_parse_empty_board(self):
         """Test parsing a board with no tasks."""
@@ -119,10 +117,10 @@ columns:
 """
         result = BrainfileParser.parse_with_errors(content)
         assert result.error is None
-        assert result.board is not None
-        assert result.board.protocol_version == "1.0"
-        assert result.board.agent is not None
-        assert result.board.rules is not None
+        assert result.data is not None
+        assert result.data["protocolVersion"] == "1.0"
+        assert result.data.get("agent") is not None
+        assert result.data.get("rules") is not None
 
     def test_parse_duplicate_columns(self):
         """Test that duplicate columns are consolidated."""
@@ -143,9 +141,7 @@ columns:
 """
         result = BrainfileParser.parse_with_errors(content)
         assert result.data is not None
-        # Columns should be consolidated
-        assert len(result.data.columns if hasattr(result.data, "columns") else result.data["columns"]) == 1
-        # Warnings should be present
+        assert len(result.data["columns"]) == 1
         assert result.warnings is not None
         assert any("Duplicate" in w for w in result.warnings)
 

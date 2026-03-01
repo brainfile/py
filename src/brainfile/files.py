@@ -11,7 +11,6 @@ Notes
 
 from __future__ import annotations
 
-# ruff: noqa: N802,N803
 import os
 from dataclasses import dataclass
 
@@ -25,8 +24,8 @@ BrainfileResolutionKind = str  # 'dotdir' | 'root' | 'hidden' | 'bb'
 
 @dataclass(frozen=True)
 class FoundBrainfile:
-    absolutePath: str
-    projectRoot: str
+    absolute_path: str
+    project_root: str
     kind: BrainfileResolutionKind
 
 
@@ -41,8 +40,8 @@ def _exists_file(p: str) -> bool:
         return False
 
 
-def findBrainfile(startDir: str | None = None) -> FoundBrainfile | None:
-    """Walk up from startDir (or cwd) to find a brainfile.
+def find_brainfile(start_dir: str | None = None) -> FoundBrainfile | None:
+    """Walk up from start_dir (or cwd) to find a brainfile.
 
     Resolution priority per directory:
     1) `.brainfile/brainfile.md` (preferred)
@@ -51,25 +50,27 @@ def findBrainfile(startDir: str | None = None) -> FoundBrainfile | None:
     4) `.bb.md` (legacy)
     """
 
-    current_dir = os.path.abspath(startDir or os.getcwd())
+    current_dir = os.path.abspath(start_dir or os.getcwd())
     root = os.path.abspath(os.sep)
 
     while True:
         preferred = os.path.join(current_dir, DOT_BRAINFILE_DIRNAME, BRAINFILE_BASENAME)
         if _exists_file(preferred):
-            return FoundBrainfile(absolutePath=preferred, projectRoot=current_dir, kind="dotdir")
+            return FoundBrainfile(absolute_path=preferred, project_root=current_dir, kind="dotdir")
 
         legacy = os.path.join(current_dir, BRAINFILE_BASENAME)
         if _exists_file(legacy):
-            return FoundBrainfile(absolutePath=legacy, projectRoot=current_dir, kind="root")
+            return FoundBrainfile(absolute_path=legacy, project_root=current_dir, kind="root")
 
         hidden_legacy = os.path.join(current_dir, ".brainfile.md")
         if _exists_file(hidden_legacy):
-            return FoundBrainfile(absolutePath=hidden_legacy, projectRoot=current_dir, kind="hidden")
+            return FoundBrainfile(
+                absolute_path=hidden_legacy, project_root=current_dir, kind="hidden"
+            )
 
         bb_legacy = os.path.join(current_dir, ".bb.md")
         if _exists_file(bb_legacy):
-            return FoundBrainfile(absolutePath=bb_legacy, projectRoot=current_dir, kind="bb")
+            return FoundBrainfile(absolute_path=bb_legacy, project_root=current_dir, kind="bb")
 
         if current_dir == root:
             break
@@ -84,14 +85,14 @@ def findBrainfile(startDir: str | None = None) -> FoundBrainfile | None:
 
 @dataclass(frozen=True)
 class ResolveBrainfilePathOptions:
-    filePath: str | None = None
-    startDir: str | None = None
+    file_path: str | None = None
+    start_dir: str | None = None
 
 
-def resolveBrainfilePath(options: ResolveBrainfilePathOptions | None = None) -> str:
+def resolve_brainfile_path(options: ResolveBrainfilePathOptions | None = None) -> str:
     options = options or ResolveBrainfilePathOptions()
-    start_dir = os.path.abspath(options.startDir or os.getcwd())
-    file_path = options.filePath
+    start_dir = os.path.abspath(options.start_dir or os.getcwd())
+    file_path = options.file_path
 
     is_default_placeholder = file_path is None or file_path in (
         BRAINFILE_BASENAME,
@@ -99,9 +100,9 @@ def resolveBrainfilePath(options: ResolveBrainfilePathOptions | None = None) -> 
     )
 
     if is_default_placeholder:
-        found = findBrainfile(start_dir)
+        found = find_brainfile(start_dir)
         if found:
-            return found.absolutePath
+            return found.absolute_path
         return _to_absolute(file_path or BRAINFILE_BASENAME)
 
     if os.path.isabs(file_path):
@@ -110,33 +111,33 @@ def resolveBrainfilePath(options: ResolveBrainfilePathOptions | None = None) -> 
     return os.path.abspath(os.path.join(start_dir, file_path))
 
 
-def getBrainfileStateDir(brainfilePath: str) -> str:
-    abs_path = _to_absolute(brainfilePath)
+def get_brainfile_state_dir(brainfile_path: str) -> str:
+    abs_path = _to_absolute(brainfile_path)
     brainfile_dir = os.path.dirname(abs_path)
     if os.path.basename(brainfile_dir) == DOT_BRAINFILE_DIRNAME:
         return brainfile_dir
     return os.path.join(brainfile_dir, DOT_BRAINFILE_DIRNAME)
 
 
-def getBrainfileStatePath(brainfilePath: str) -> str:
+def get_brainfile_state_path(brainfile_path: str) -> str:
     """Deprecated. Brainfile no longer writes/uses state.json."""
 
-    return os.path.join(getBrainfileStateDir(brainfilePath), BRAINFILE_STATE_BASENAME)
+    return os.path.join(get_brainfile_state_dir(brainfile_path), BRAINFILE_STATE_BASENAME)
 
 
-def getDotBrainfileGitignorePath(brainfilePath: str) -> str:
-    return os.path.join(getBrainfileStateDir(brainfilePath), DOT_BRAINFILE_GITIGNORE_BASENAME)
+def get_dot_brainfile_gitignore_path(brainfile_path: str) -> str:
+    return os.path.join(get_brainfile_state_dir(brainfile_path), DOT_BRAINFILE_GITIGNORE_BASENAME)
 
 
-def ensureDotBrainfileDir(brainfilePath: str) -> str:
-    d = getBrainfileStateDir(brainfilePath)
+def ensure_dot_brainfile_dir(brainfile_path: str) -> str:
+    d = get_brainfile_state_dir(brainfile_path)
     os.makedirs(d, exist_ok=True)
     return d
 
 
-def ensureDotBrainfileGitignore(brainfilePath: str) -> None:
-    ensureDotBrainfileDir(brainfilePath)
-    gitignore_path = getDotBrainfileGitignorePath(brainfilePath)
+def ensure_dot_brainfile_gitignore(brainfile_path: str) -> None:
+    ensure_dot_brainfile_dir(brainfile_path)
+    gitignore_path = get_dot_brainfile_gitignore_path(brainfile_path)
 
     if not os.path.exists(gitignore_path):
         with open(gitignore_path, "w", encoding="utf-8") as f:

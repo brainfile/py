@@ -330,12 +330,10 @@ class TestWatchBrainfiles:
         assert result.success is True
         assert result.error is None
         assert result.is_active() is True
-        assert result.isActive() is True
 
         result.stop()
 
         assert result.is_active() is False
-        assert result.isActive() is False
 
     def test_watch_startup_returns_enoent_for_missing_directory(self, tmp_path):
         """Missing directory returns ENOENT startup error result."""

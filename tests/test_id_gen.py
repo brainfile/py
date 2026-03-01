@@ -3,14 +3,9 @@
 import pytest
 
 from brainfile import (
-    Board,
-    Column,
-    Task,
     extract_task_id_number,
     generate_next_subtask_id,
-    generate_next_task_id,
-    generate_subtask_id_from_index,
-    get_max_task_id_number,
+    generate_subtask_id,
     get_parent_task_id,
     is_valid_subtask_id,
     is_valid_task_id,
@@ -48,54 +43,13 @@ class TestExtractTaskIdNumber:
         assert extract_task_id_number("type.v2-11", "type.v2") == 11
 
 
-class TestGetMaxTaskIdNumber:
-    """Tests for get_max_task_id_number."""
-
-    def test_empty_board(self, minimal_board: Board):
-        """Test max ID on empty board is 0."""
-        assert get_max_task_id_number(minimal_board) == 0
-
-    def test_board_with_tasks(self, board_with_tasks: Board):
-        """Test max ID with existing tasks."""
-        assert get_max_task_id_number(board_with_tasks) == 3
-
-    def test_board_with_archive(self):
-        """Test max ID does NOT consider archived tasks (matches TypeScript)."""
-        board = Board(
-            title="Test",
-            columns=[
-                Column(id="todo", title="To Do", tasks=[
-                    Task(id="task-5", title="Active"),
-                ]),
-            ],
-            archive=[
-                Task(id="task-10", title="Archived"),
-            ],
-        )
-        # Archive is NOT checked - this matches TypeScript behavior
-        # Only active tasks in columns are considered
-        assert get_max_task_id_number(board) == 5
-
-
-class TestGenerateNextTaskId:
-    """Tests for generate_next_task_id."""
-
-    def test_empty_board(self, minimal_board: Board):
-        """Test generating ID for empty board."""
-        assert generate_next_task_id(minimal_board) == "task-1"
-
-    def test_board_with_tasks(self, board_with_tasks: Board):
-        """Test generating next ID."""
-        assert generate_next_task_id(board_with_tasks) == "task-4"
-
-
 class TestGenerateSubtaskId:
-    """Tests for generate_subtask_id_from_index."""
+    """Tests for generate_subtask_id (0-indexed, output is 1-based)."""
 
     def test_generate_subtask_id(self):
         """Test generating subtask ID from index."""
-        assert generate_subtask_id_from_index("task-1", 1) == "task-1-1"
-        assert generate_subtask_id_from_index("task-42", 3) == "task-42-3"
+        assert generate_subtask_id("task-1", 0) == "task-1-1"
+        assert generate_subtask_id("task-42", 2) == "task-42-3"
 
 
 class TestGenerateNextSubtaskId:

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "brainfile"
-version = "0.1.1"
+version = "0.2.0"
 description = "Python library for the Brainfile task management protocol"
 readme = "README.md"
 license = "MIT"
@@ -25,15 +25,18 @@ classifiers = [
 dependencies = [
     "pydantic>=2.0",
     "ruamel.yaml>=0.18",
-    "watchdog>=3.0",
 ]
 
 [project.optional-dependencies]
+watch = [
+    "watchdog>=3.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov",
     "mypy",
     "ruff",
+    "watchdog>=3.0",
 ]
 
 [project.urls]

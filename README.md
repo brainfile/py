@@ -22,6 +22,12 @@ Or with [uv](https://github.com/astral-sh/uv):
 uv add brainfile
 ```
 
+To enable file watching (optional):
+
+```bash
+pip install brainfile[watch]
+```
+
 ## v2 Architecture
 
 Brainfile v2 uses a directory-based structure. Each task is its own markdown file.
@@ -39,26 +45,26 @@ Brainfile v2 uses a directory-based structure. Each task is its own markdown fil
 ## Quick Start
 
 ```python
-from brainfile import ensureV2Dirs, addTaskFile, readTasksDir, completeTaskFile
+from brainfile import ensure_dirs, add_task_file, read_tasks_dir, complete_task_file
 
 # Initialize workspace
-dirs = ensureV2Dirs(".brainfile/brainfile.md")
+dirs = ensure_dirs(".brainfile/brainfile.md")
 
 # Add a task
-result = addTaskFile(
-    dirs.boardDir,
+result = add_task_file(
+    dirs.board_dir,
     {"title": "Implement auth", "column": "in-progress", "priority": "high"},
     body="## Description\nAdd JWT authentication to the API.\n",
 )
 print(result["task"].id)  # "task-1"
 
 # List all active tasks
-for doc in readTasksDir(dirs.boardDir):
+for doc in read_tasks_dir(dirs.board_dir):
     t = doc.task
     print(f"{t.id}: {t.title} [{t.column}]")
 
 # Complete a task (moves to logs/)
-completeTaskFile(result["filePath"], dirs.logsDir)
+complete_task_file(result["file_path"], dirs.logs_dir)
 ```
 
 ## Task File Operations
@@ -66,18 +72,18 @@ completeTaskFile(result["filePath"], dirs.logsDir)
 Read and write individual task files.
 
 ```python
-from brainfile import readTaskFile, writeTaskFile, findV2Task, getV2Dirs
+from brainfile import read_task_file, write_task_file, find_workspace_task, get_dirs
 
 # Read a single task
-doc = readTaskFile(".brainfile/board/task-1.md")
+doc = read_task_file(".brainfile/board/task-1.md")
 print(doc.task.title)
 print(doc.body)  # Markdown content below frontmatter
 
 # Find a task across board and logs
-dirs = getV2Dirs(".brainfile/brainfile.md")
-result = findV2Task(dirs, "task-1", searchLogs=True)
+dirs = get_dirs(".brainfile/brainfile.md")
+result = find_workspace_task(dirs, "task-1", search_logs=True)
 if result:
-    print(result["doc"].task.title, "in", "logs" if result["isLog"] else "board")
+    print(result["doc"].task.title, "in", "logs" if result["is_log"] else "board")
 ```
 
 ## Contracts
@@ -85,9 +91,9 @@ if result:
 Tasks can carry formal contracts for AI agent coordination: deliverables, validation commands, constraints, and feedback for rework.
 
 ```python
-from brainfile import readTaskFile, writeTaskFile, Contract, Deliverable
+from brainfile import read_task_file, write_task_file, Contract, Deliverable
 
-doc = readTaskFile(".brainfile/board/task-1.md")
+doc = read_task_file(".brainfile/board/task-1.md")
 task = doc.task
 
 # Attach a contract
@@ -101,7 +107,7 @@ task.contract = Contract(
     constraints=["Use PyJWT library", "Token expiry must be configurable"],
 )
 
-writeTaskFile(".brainfile/board/task-1.md", task, doc.body)
+write_task_file(".brainfile/board/task-1.md", task, doc.body)
 ```
 
 ### Contract Lifecycle
@@ -113,78 +119,10 @@ ready  →  in_progress  →  delivered  →  done
                              (add feedback, reset to ready)
 ```
 
-```python
-from brainfile import setTaskContractStatus
-
-# Agent picks up work
-setTaskContractStatus(board, "task-1", "in_progress")
-
-# Agent delivers
-setTaskContractStatus(board, "task-1", "delivered")
-
-# PM validates
-setTaskContractStatus(board, "task-1", "done")
-```
-
-## Board Operations (V1)
-
-Immutable operations on in-memory board objects. Useful for single-file workflows or building custom tools.
-
-```python
-from brainfile import Brainfile, add_task, move_task, patch_task, TaskInput, TaskPatch
-
-# Parse a brainfile
-result = Brainfile.parse(markdown_content)
-board = result.board
-
-# Add a task
-result = add_task(board, "todo", TaskInput(title="New task", priority="high"))
-board = result.board
-
-# Move between columns
-result = move_task(board, "task-1", "todo", "in-progress")
-
-# Patch fields
-result = patch_task(board, "task-1", TaskPatch(tags=["urgent"], assignee="codex"))
-
-# Serialize back
-output = Brainfile.serialize(board)
-```
-
-## Queries
-
-```python
-from brainfile import (
-    find_task_by_id,
-    get_all_tasks,
-    get_tasks_by_tag,
-    get_tasks_by_assignee,
-    search_tasks,
-)
-
-task_info = find_task_by_id(board, "task-1")
-urgent = get_tasks_by_tag(board, "urgent")
-results = search_tasks(board, "auth")
-```
-
-## Validation and Linting
-
-```python
-from brainfile import BrainfileValidator, BrainfileLinter, LintOptions
-
-# Validate board structure
-result = BrainfileValidator.validate(board)
-for error in result.errors:
-    print(f"{error.path}: {error.message}")
-
-# Lint with auto-fix
-result = BrainfileLinter.lint(content, LintOptions(auto_fix=True))
-```
-
 ## File Discovery
 
 ```python
-from brainfile import discover, find_nearest_brainfile, isV2
+from brainfile import discover, find_nearest_brainfile, is_workspace
 
 # Find brainfiles in a project
 result = discover("/path/to/project")
@@ -194,8 +132,8 @@ for f in result.files:
 # Walk up to find nearest brainfile
 path = find_nearest_brainfile()
 
-# Check if a workspace is v2
-if isV2(".brainfile/brainfile.md"):
+# Check if a workspace has the v2 board/ directory
+if is_workspace(".brainfile/brainfile.md"):
     print("V2 workspace detected")
 ```
 

@@ -5,47 +5,31 @@ V2 per-task file reader/writer.
 Parity notes (matches TypeScript core v2 `taskFile.ts`):
 
 * Task files are markdown documents with YAML frontmatter delimited by `---`.
-* ``parseTaskContent`` returns ``None`` (not an exception) for invalid input.
+* ``parse_task_content`` returns ``None`` (not an exception) for invalid input.
 * Parsed body trims a single leading blank line (convention: one blank line after
   frontmatter), but is otherwise preserved.
 * Serialization ensures a blank line between frontmatter and body (when body is
   non-empty) and ensures a trailing newline.
-* ``readTaskFile`` populates an absolute ``file_path``.
-
-The functions are intentionally exported in camelCase to align with TS core
-exports.
+* ``read_task_file`` populates an absolute ``file_path``.
 """
 
 from __future__ import annotations
 
-# ruff: noqa: N802,N803
-import contextlib
 import os
 from io import StringIO
 from typing import Any, overload
 
-from ruamel.yaml import YAML
-
 from .models import Task, TaskDocument
+from ._yaml import create_yaml
 
 
-def taskFileName(taskId: str) -> str:
+def task_file_name(task_id: str) -> str:
     """Return the conventional filename for a task id (e.g. ``task-1.md``)."""
 
-    return f"{taskId}.md"
+    return f"{task_id}.md"
 
 
-def _create_yaml() -> YAML:
-    yaml = YAML()
-    yaml.preserve_quotes = True
-    yaml.default_flow_style = False
-    # Match TS `sortKeys: false` behavior as closely as ruamel allows.
-    with contextlib.suppress(Exception):
-        yaml.sort_base_mapping_type_on_output = False  # type: ignore[attr-defined]
-    return yaml
-
-
-def parseTaskContent(content: str) -> TaskDocument | None:
+def parse_task_content(content: str) -> TaskDocument | None:
     """Parse raw task file content into a :class:`~brainfile.models.TaskDocument`.
 
     Returns ``None`` for invalid inputs.
@@ -70,7 +54,7 @@ def parseTaskContent(content: str) -> TaskDocument | None:
     yaml_content = "\n".join(lines[1:end_index])
     body_content = "\n".join(lines[end_index + 1 :])
 
-    yaml = _create_yaml()
+    yaml = create_yaml()
     try:
         parsed: Any = yaml.load(StringIO(yaml_content))
     except Exception:
@@ -94,12 +78,12 @@ def parseTaskContent(content: str) -> TaskDocument | None:
     return TaskDocument(task=task, body=body)
 
 
-def serializeTaskContent(task: Task, body: str = "") -> str:
+def serialize_task_content(task: Task, body: str = "") -> str:
     """Serialize a task and body into v2 markdown file content."""
 
     task_dict = task.model_dump(exclude_none=True, by_alias=True, mode="json")
 
-    yaml = _create_yaml()
+    yaml = create_yaml()
     buf = StringIO()
     yaml.dump(task_dict, buf)
     yaml_str = buf.getvalue()
@@ -119,41 +103,41 @@ def serializeTaskContent(task: Task, body: str = "") -> str:
     return "".join(parts)
 
 
-def readTaskFile(filePath: str) -> TaskDocument | None:
+def read_task_file(file_path: str) -> TaskDocument | None:
     """Read and parse a task file from disk.
 
     Returns None when the file does not exist or is invalid.
     """
 
     try:
-        with open(filePath, encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             content = f.read()
     except Exception:
         return None
 
-    doc = parseTaskContent(content)
+    doc = parse_task_content(content)
     if not doc:
         return None
 
-    doc.file_path = os.path.abspath(filePath)
+    doc.file_path = os.path.abspath(file_path)
     return doc
 
 
 @overload
-def writeTaskFile(filePath: str, doc: TaskDocument) -> None: ...
+def write_task_file(file_path: str, doc: TaskDocument) -> None: ...
 
 
 @overload
-def writeTaskFile(filePath: str, task: Task, body: str = "") -> None: ...
+def write_task_file(file_path: str, task: Task, body: str = "") -> None: ...
 
 
-def writeTaskFile(filePath: str, task_or_doc: TaskDocument | Task, body: str = "") -> None:
+def write_task_file(file_path: str, task_or_doc: TaskDocument | Task, body: str = "") -> None:
     """Write a task file to disk.
 
     This is intentionally compatible with both:
 
-    * legacy Python usage: ``writeTaskFile(path, TaskDocument(...))``
-    * TS parity usage: ``writeTaskFile(path, task, body)``
+    * legacy Python usage: ``write_task_file(path, TaskDocument(...))``
+    * TS parity usage: ``write_task_file(path, task, body)``
     """
 
     if isinstance(task_or_doc, TaskDocument):
@@ -165,20 +149,20 @@ def writeTaskFile(filePath: str, task_or_doc: TaskDocument | Task, body: str = "
         task = task_or_doc
         actual_body = body
 
-    parent_dir = os.path.dirname(filePath)
+    parent_dir = os.path.dirname(file_path)
     if parent_dir:
         os.makedirs(parent_dir, exist_ok=True)
 
-    content = serializeTaskContent(task, actual_body)
-    with open(filePath, "w", encoding="utf-8") as f:
+    content = serialize_task_content(task, actual_body)
+    with open(file_path, "w", encoding="utf-8") as f:
         f.write(content)
 
 
-def readTasksDir(dirPath: str) -> list[TaskDocument]:
+def read_tasks_dir(dir_path: str) -> list[TaskDocument]:
     """Read all task files from a directory."""
 
     try:
-        entries = os.listdir(dirPath)
+        entries = os.listdir(dir_path)
     except Exception:
         return []
 
@@ -187,10 +171,10 @@ def readTasksDir(dirPath: str) -> list[TaskDocument]:
     for name in entries:
         if not name.endswith(".md"):
             continue
-        file_path = os.path.join(dirPath, name)
-        if not os.path.isfile(file_path):
+        fp = os.path.join(dir_path, name)
+        if not os.path.isfile(fp):
             continue
-        doc = readTaskFile(file_path)
+        doc = read_task_file(fp)
         if doc:
             docs.append(doc)
 

@@ -13,12 +13,11 @@ wheels = [
 
 [[package]]
 name = "brainfile"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },
     { name = "ruamel-yaml" },
-    { name = "watchdog" },
 ]
 
 [package.optional-dependencies]
@@ -27,6 +26,10 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
+    { name = "watchdog" },
+]
+watch = [
+    { name = "watchdog" },
 ]
 
 [package.metadata]
@@ -37,9 +40,10 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "ruamel-yaml", specifier = ">=0.18" },
     { name = "ruff", marker = "extra == 'dev'" },
-    { name = "watchdog", specifier = ">=3.0" },
+    { name = "watchdog", marker = "extra == 'dev'", specifier = ">=3.0" },
+    { name = "watchdog", marker = "extra == 'watch'", specifier = ">=3.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["watch", "dev"]
 
 [[package]]
 name = "colorama"

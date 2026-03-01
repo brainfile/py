@@ -2,7 +2,7 @@
 
 import pytest
 
-from brainfile import SchemaHints, parse_schema_hints, load_schema_hints
+from brainfile.schema_hints import SchemaHints, parse_schema_hints, load_schema_hints
 
 
 class TestSchemaHints:

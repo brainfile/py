@@ -1,8 +1,7 @@
 """
-Pydantic data models for Brainfile types.
+Pydantic data models for the Brainfile protocol.
 
-This module defines all the core data structures used in brainfiles,
-including Board, Column, Task, Subtask, Journal, and related types.
+Core data structures: BoardConfig, Task, TaskDocument, Contract, and related types.
 """
 
 from __future__ import annotations
@@ -20,16 +19,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class BrainfileType(str, Enum):
     """
-    Example brainfile type names.
+    Brainfile type names.
 
-    IMPORTANT: The type system is OPEN - any string value is valid.
-    These are just reference examples from official schemas.
-
-    Custom types work identically:
-    - 'sprint-board' with columns[] -> kanban renderer (same as 'board')
-    - 'dev-log' with entries[] -> timeline renderer (same as 'journal')
-
-    Type names are metadata only. Structure determines behavior.
+    The type system is OPEN — any string value is valid.
+    These are reference examples from official schemas.
     """
 
     BOARD = "board"
@@ -40,34 +33,14 @@ class BrainfileType(str, Enum):
 
 
 class RendererType(str, Enum):
-    """
-    Renderer types for displaying brainfiles.
-
-    Renderers are selected by:
-    1. Schema hints (x-brainfile-renderer) - explicit override
-    2. Structural patterns - detect from data shape
-    3. Fallback to tree view
-
-    No special treatment for official types - everyone uses structural inference.
-    """
+    """Renderer types for displaying brainfiles."""
 
     KANBAN = "kanban"
-    """Kanban board with columns and draggable cards"""
-
     TIMELINE = "timeline"
-    """Timeline/chronological view with timestamps"""
-
     CHECKLIST = "checklist"
-    """Simple flat checklist with completion tracking"""
-
     GROUPED_LIST = "grouped-list"
-    """Grouped list with categories"""
-
     DOCUMENT = "document"
-    """Document viewer for structured content"""
-
     TREE = "tree"
-    """Generic tree view (fallback for unknown types)"""
 
 
 class Priority(str, Enum):
@@ -127,7 +100,6 @@ class StatsConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     columns: list[str] | None = None
-    """Column IDs to display in stats (max 4)"""
 
 
 class Subtask(BaseModel):
@@ -141,7 +113,7 @@ class Subtask(BaseModel):
 
 
 # =============================================================================
-# V2 Protocol: Contract System Types (defined before Task due to forward refs)
+# Contract System Types
 # =============================================================================
 
 
@@ -267,12 +239,12 @@ class ContractPatch(BaseModel):
 
 
 # =============================================================================
-# Task Type (with V2 extensions)
+# Task
 # =============================================================================
 
 
 class Task(BaseModel):
-    """Task definition - used by board type."""
+    """Task definition — the core unit of work in brainfile."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -292,29 +264,12 @@ class Task(BaseModel):
     subtasks: list[Subtask] | None = None
     template: TemplateType | None = None
     created_at: str | None = Field(default=None, alias="createdAt")
-    """ISO 8601 timestamp"""
     updated_at: str | None = Field(default=None, alias="updatedAt")
-    """ISO 8601 timestamp"""
     completed_at: str | None = Field(default=None, alias="completedAt")
-    """ISO 8601 timestamp when task was completed (v2)"""
-
-    # V2 Protocol Fields
-    column: str | None = Field(
-        default=None,
-        description="V2 format: column ID (from frontmatter). V1: derived from column location."
-    )
-    position: int | None = Field(
-        default=None,
-        description="V2 format: position within column for ordering"
-    )
-    contract: Contract | None = Field(
-        default=None,
-        description="Agent contract specification (v2)"
-    )
-    type: str | None = Field(
-        default=None,
-        description="Custom task type (e.g., 'epic', 'adr', 'spike')"
-    )
+    column: str | None = Field(default=None, description="Column ID from frontmatter")
+    position: int | None = Field(default=None, description="Position within column for ordering")
+    contract: Contract | None = Field(default=None, description="Agent contract specification")
+    type: str | None = Field(default=None, description="Custom task type (e.g., 'epic', 'adr')")
 
 
 class TemplateVariable(BaseModel):
@@ -351,14 +306,14 @@ class TemplateConfig(BaseModel):
 
 
 # =============================================================================
-# V2 Protocol: Task File Types
+# Task File Types
 # =============================================================================
 
 
 class TaskDocument(BaseModel):
     """
-    Container for a v2 task file (board/*.md or logs/*.md).
-    
+    Container for a task file (board/*.md or logs/*.md).
+
     Represents the parsed structure of a single task file:
     - Frontmatter (YAML): Task metadata
     - Body (Markdown): Description + logs
@@ -376,129 +331,18 @@ class TaskDocument(BaseModel):
 
 
 # =============================================================================
-# Board and Journal Types
-# =============================================================================
-
-
-class Column(BaseModel):
-    """Column definition for Kanban boards."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    id: str
-    title: str
-    order: int | None = None
-    completion_column: bool | None = Field(default=None, alias="completionColumn")
-    tasks: list[Task] = Field(default_factory=list)
-
-
-class Board(BaseModel):
-    """
-    Board type - Kanban-style task board with columns.
-
-    Extends BrainfileBase with board-specific fields.
-    """
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    # Base fields (shared by all brainfile types)
-    title: str
-    """Brainfile title"""
-
-    type: Literal["board"] | None = None
-    """Type discriminator"""
-
-    schema_url: str | None = Field(default=None, alias="schema")
-    """Schema URL for validation"""
-
-    protocol_version: str | None = Field(default=None, alias="protocolVersion")
-    """Protocol version (semver)"""
-
-    agent: AgentInstructions | None = None
-    """AI agent instructions"""
-
-    rules: Rules | None = None
-    """Project rules and guidelines"""
-
-    # Board-specific fields
-    columns: list[Column] = Field(default_factory=list)
-    archive: list[Task] | None = None
-    stats_config: StatsConfig | None = Field(default=None, alias="statsConfig")
-
-
-# =============================================================================
-# Journal Types
-# =============================================================================
-
-
-class JournalEntry(BaseModel):
-    """Journal entry definition."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    id: str
-    title: str
-    content: str | None = None
-    summary: str | None = None
-    mood: str | None = None
-    tags: list[str] | None = None
-    created_at: str = Field(alias="createdAt")
-    """ISO 8601 timestamp"""
-    updated_at: str | None = Field(default=None, alias="updatedAt")
-    """ISO 8601 timestamp"""
-
-
-class Journal(BaseModel):
-    """
-    Journal type - Time-ordered entries.
-
-    Extends shared brainfile fields with journal-specific entries.
-    """
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    # Base fields (shared by all brainfile types)
-    title: str
-    """Brainfile title"""
-
-    type: Literal["journal"] | None = None
-    """Type discriminator"""
-
-    schema_url: str | None = Field(default=None, alias="schema")
-    """Schema URL for validation"""
-
-    protocol_version: str | None = Field(default=None, alias="protocolVersion")
-    """Protocol version (semver)"""
-
-    agent: AgentInstructions | None = None
-    """AI agent instructions"""
-
-    rules: Rules | None = None
-    """Project rules and guidelines"""
-
-    # Journal-specific fields
-    entries: list[JournalEntry] = Field(default_factory=list)
-
-
-# =============================================================================
-# V2 Protocol: Board Configuration Types
+# Board Configuration Types
 # =============================================================================
 
 
 class ColumnConfig(BaseModel):
-    """
-    Configuration for a single board column (v2 format).
-    V2 columns don't embed tasks; they're references.
-    """
+    """Configuration for a single board column. Columns don't embed tasks."""
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     id: str = Field(description="Unique column identifier")
     title: str = Field(description="Human-readable column title")
-    order: int | None = Field(
-        default=None,
-        description="Sort order for column display"
-    )
+    order: int | None = Field(default=None, description="Sort order for column display")
     completion_column: bool | None = Field(
         default=False,
         alias="completionColumn",
@@ -532,10 +376,9 @@ TypesConfig = dict[str, TypeEntry]
 
 class BoardConfig(BaseModel):
     """
-    V2 format board configuration (from .brainfile/brainfile.md).
-    Different from v1 Board which embeds tasks.
-    
-    V2 boards are distributed:
+    Board configuration (from .brainfile/brainfile.md).
+
+    Distributed board:
     - Config file: .brainfile/brainfile.md (columns, rules, agent, types)
     - Active tasks: .brainfile/board/*.md (individual files)
     - Archived tasks: .brainfile/logs/*.md (individual files)
@@ -543,9 +386,10 @@ class BoardConfig(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True, extra="allow")
 
+    title: str | None = Field(default=None, description="Board title")
     type: Literal["board"] = Field(default="board")
     columns: list[ColumnConfig] = Field(
-        description="Column definitions (no embedded tasks in v2)"
+        description="Column definitions (no embedded tasks)"
     )
     strict: bool | None = Field(
         default=False,
@@ -560,22 +404,13 @@ class BoardConfig(BaseModel):
         alias="statsConfig",
         description="Statistics and aggregation configuration"
     )
-    # Inherited from BrainfileBase
     agent: AgentInstructions | None = Field(default=None)
     rules: Rules | None = Field(default=None)
     metadata: dict | None = Field(default=None)
 
 
 # =============================================================================
-# Union Type
-# =============================================================================
-
-Brainfile = Board | Journal
-"""Union type for currently modeled brainfile types."""
-
-
-# =============================================================================
-# Type Aliases for Literal Types
+# Type Aliases
 # =============================================================================
 
 PriorityLiteral = Literal["low", "medium", "high", "critical"]

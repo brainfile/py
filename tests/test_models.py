@@ -5,9 +5,9 @@ import pytest
 from brainfile import (
     BRAINFILE_BASENAME,
     BRAINFILE_STATE_BASENAME,
-    Board,
+    BoardConfig,
     BrainfileResolutionKind,
-    Column,
+    ColumnConfig,
     ContractPatch,
     DOT_BRAINFILE_DIRNAME,
     DOT_BRAINFILE_GITIGNORE_BASENAME,
@@ -94,66 +94,46 @@ class TestSubtask:
         assert subtask.completed is False
 
 
-class TestColumn:
-    """Tests for the Column model."""
+class TestBoardConfig:
+    """Tests for the BoardConfig model."""
+
+    def test_minimal_config(self):
+        """Test creating a minimal board config."""
+        config = BoardConfig(
+            columns=[ColumnConfig(id="todo", title="To Do")]
+        )
+        assert len(config.columns) == 1
+        assert config.columns[0].id == "todo"
+
+    def test_config_from_dict(self):
+        """Test creating board config from dict."""
+        data = {
+            "title": "Test Board",
+            "columns": [
+                {"id": "todo", "title": "To Do"},
+                {"id": "done", "title": "Done", "completionColumn": True},
+            ],
+        }
+        config = BoardConfig.model_validate(data)
+        assert config.title == "Test Board"
+        assert len(config.columns) == 2
+        assert config.columns[1].completion_column is True
+
+
+class TestColumnConfig:
+    """Tests for the ColumnConfig model."""
 
     def test_minimal_column(self):
         """Test creating a column with required fields."""
-        column = Column(id="todo", title="To Do", tasks=[])
-        assert column.id == "todo"
-        assert column.title == "To Do"
-        assert column.tasks == []
+        col = ColumnConfig(id="todo", title="To Do")
+        assert col.id == "todo"
+        assert col.title == "To Do"
+        assert col.completion_column is False
 
-    def test_column_with_tasks(self):
-        """Test creating a column with tasks."""
-        column = Column(
-            id="todo",
-            title="To Do",
-            tasks=[
-                Task(id="task-1", title="Task 1"),
-                Task(id="task-2", title="Task 2"),
-            ],
-        )
-        assert len(column.tasks) == 2
-
-    def test_column_default_tasks(self):
-        """Test that tasks defaults to empty list."""
-        column = Column(id="todo", title="To Do")
-        assert column.tasks == []
-
-
-class TestBoard:
-    """Tests for the Board model."""
-
-    def test_minimal_board(self, minimal_board: Board):
-        """Test minimal board fixture."""
-        assert minimal_board.title == "Test Board"
-        assert len(minimal_board.columns) == 1
-        assert minimal_board.columns[0].id == "todo"
-
-    def test_complex_board(self, complex_board: Board):
-        """Test complex board fixture."""
-        assert complex_board.title == "Complex Board"
-        assert complex_board.protocol_version == "1.0"
-        assert complex_board.agent is not None
-        assert complex_board.rules is not None
-        assert complex_board.stats_config is not None
-        assert len(complex_board.columns) == 2
-        assert complex_board.archive is not None
-        assert len(complex_board.archive) == 1
-
-    def test_board_from_dict(self, minimal_board_dict: dict):
-        """Test creating a board from dict."""
-        board = Board.model_validate(minimal_board_dict)
-        assert board.title == "Test Board"
-        assert len(board.columns) == 1
-
-    def test_board_deep_copy(self, minimal_board: Board):
-        """Test deep copying a board."""
-        copy = minimal_board.model_copy(deep=True)
-        copy.title = "Modified"
-        assert minimal_board.title == "Test Board"
-        assert copy.title == "Modified"
+    def test_completion_column(self):
+        """Test creating a completion column."""
+        col = ColumnConfig(id="done", title="Done", completionColumn=True)
+        assert col.completion_column is True
 
 
 class TestPriorityEnum:
@@ -190,8 +170,7 @@ class TestTopLevelExportSurface:
         assert "TaskDocument" in __import__("brainfile").__all__
 
     def test_contract_patch_type_exported(self):
-        assert ContractPatch.__module__ == "brainfile.contract_ops"
-        assert "status" in ContractPatch.__annotations__
+        assert ContractPatch.__module__ == "brainfile.models"
         assert "ContractPatch" in __import__("brainfile").__all__
 
     def test_file_constants_exported(self):

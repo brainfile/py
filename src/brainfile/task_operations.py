@@ -11,18 +11,18 @@ This mirrors TS core v2 ``taskOperations.ts``.
 
 from __future__ import annotations
 
-# ruff: noqa: N802,N803,N815
 import os
 import re
 from datetime import datetime
 from typing import Literal, TypedDict
 
 from .models import Task, TaskDocument, Subtask
+from .templates import generate_subtask_id
 from .task_file import (
-    readTaskFile,
-    readTasksDir,
-    taskFileName,
-    writeTaskFile,
+    read_task_file,
+    read_tasks_dir,
+    task_file_name,
+    write_task_file,
 )
 
 
@@ -31,7 +31,7 @@ class TaskOperationResult(TypedDict, total=False):
 
     success: bool
     task: Task | None
-    filePath: str | None
+    file_path: str | None
     error: str | None
 
 
@@ -46,11 +46,11 @@ class TaskFileInput(TypedDict, total=False):
     priority: Literal["low", "medium", "high", "critical"]
     tags: list[str]
     assignee: str
-    dueDate: str
-    relatedFiles: list[str]
+    due_date: str
+    related_files: list[str]
     template: Literal["bug", "feature", "refactor"]
     subtasks: list[str]
-    parentId: str
+    parent_id: str
     """Optional parent task/document ID for first-class parent-child linking."""
     type: str
     """Document type (e.g., 'epic', 'adr'). When set, IDs use this as prefix (epic-1, adr-1)."""
@@ -63,7 +63,7 @@ class TaskFilters(TypedDict, total=False):
     tag: str
     priority: Literal["low", "medium", "high", "critical"]
     assignee: str
-    parentId: str
+    parent_id: str
 
 
 class ChildTaskSummary(TypedDict):
@@ -107,7 +107,7 @@ def _resolve_child_tasks(
     board_dir: str,
     logs_dir: str,
 ) -> list[ChildTaskSummary]:
-    docs = readTasksDir(board_dir) + readTasksDir(logs_dir)
+    docs = read_tasks_dir(board_dir) + read_tasks_dir(logs_dir)
 
     # Prefer first-class parentId links when present.
     linked = [doc for doc in docs if doc.task.parent_id == epic_id]
@@ -139,22 +139,22 @@ def _build_child_tasks_section(child_tasks: list[ChildTaskSummary]) -> str:
     return "## Child Tasks\n" + "\n".join(lines)
 
 
-def generateNextFileTaskId(
-    boardDir: str, logsDir: str | None = None, typePrefix: str = "task"
+def generate_next_file_task_id(
+    board_dir: str, logs_dir: str | None = None, type_prefix: str = "task"
 ) -> str:
     """Generate the next task ID by scanning an existing tasks directory.
 
-    When ``typePrefix`` is provided (e.g., "epic"), generates IDs like ``epic-1``
+    When ``type_prefix`` is provided (e.g., "epic"), generates IDs like ``epic-1``
     and only scans for IDs matching that prefix. Defaults to "task".
     """
 
     max_num = 0
-    escaped = re.escape(typePrefix)
+    escaped = re.escape(type_prefix)
     pattern = re.compile(rf"^{escaped}-(\d+)$")
 
     def scan_dir(dir_path: str) -> None:
         nonlocal max_num
-        docs = readTasksDir(dir_path)
+        docs = read_tasks_dir(dir_path)
         for doc in docs:
             match = pattern.match(doc.task.id)
             if match:
@@ -162,18 +162,18 @@ def generateNextFileTaskId(
                 if num > max_num:
                     max_num = num
 
-    scan_dir(boardDir)
-    if logsDir:
-        scan_dir(logsDir)
+    scan_dir(board_dir)
+    if logs_dir:
+        scan_dir(logs_dir)
 
-    return f"{typePrefix}-{max_num + 1}"
+    return f"{type_prefix}-{max_num + 1}"
 
 
-def addTaskFile(
-    boardDir: str,
+def add_task_file(
+    board_dir: str,
     input: TaskFileInput,
     body: str = "",
-    logsDir: str | None = None,
+    logs_dir: str | None = None,
 ) -> TaskOperationResult:
     """Add a new task file to the tasks directory."""
 
@@ -185,7 +185,7 @@ def addTaskFile(
 
     # Determine ID prefix from type (e.g., type="epic" -> prefix "epic" -> "epic-1")
     type_prefix = input.get("type") or "task"
-    task_id = input.get("id") or generateNextFileTaskId(boardDir, logsDir, type_prefix)
+    task_id = input.get("id") or generate_next_file_task_id(board_dir, logs_dir, type_prefix)
     now = datetime.now().isoformat()
 
     # Build subtasks if provided
@@ -194,7 +194,7 @@ def addTaskFile(
     if subtasks_input:
         subtasks = [
             Subtask(
-                id=f"{task_id}-{i + 1}",
+                id=generate_subtask_id(task_id, i),
                 title=title.strip(),
                 completed=False,
             )
@@ -211,61 +211,61 @@ def addTaskFile(
         priority=input.get("priority"),
         tags=input.get("tags"),
         assignee=input.get("assignee"),
-        dueDate=input.get("dueDate"),
-        relatedFiles=input.get("relatedFiles"),
+        dueDate=input.get("due_date"),
+        relatedFiles=input.get("related_files"),
         template=input.get("template"),
-        parentId=input.get("parentId").strip() if input.get("parentId") else None,
+        parentId=input.get("parent_id", "").strip() if input.get("parent_id") else None,
         subtasks=subtasks,
         createdAt=now,
     )
 
-    file_path = os.path.join(boardDir, taskFileName(task_id))
+    file_path = os.path.join(board_dir, task_file_name(task_id))
 
     try:
-        writeTaskFile(file_path, task, body)
-        return {"success": True, "task": task, "filePath": file_path}
+        write_task_file(file_path, task, body)
+        return {"success": True, "task": task, "file_path": file_path}
     except Exception as e:
         return {"success": False, "error": f"Failed to write task file: {e}"}
 
 
-def moveTaskFile(
-    taskPath: str,
-    newColumn: str,
-    newPosition: int | None = None,
+def move_task_file(
+    task_path: str,
+    new_column: str,
+    new_position: int | None = None,
 ) -> TaskOperationResult:
     """Move a task to a different column by updating its frontmatter."""
 
-    doc = readTaskFile(taskPath)
+    doc = read_task_file(task_path)
     if not doc:
-        return {"success": False, "error": f"Failed to read task file: {taskPath}"}
+        return {"success": False, "error": f"Failed to read task file: {task_path}"}
 
     now = datetime.now().isoformat()
     updated_task = doc.task.model_copy(
         update={
-            "column": newColumn,
+            "column": new_column,
             "updated_at": now,
         }
     )
 
-    if newPosition is not None:
-        updated_task.position = newPosition
+    if new_position is not None:
+        updated_task.position = new_position
 
     try:
-        writeTaskFile(taskPath, updated_task, doc.body)
-        return {"success": True, "task": updated_task, "filePath": taskPath}
+        write_task_file(task_path, updated_task, doc.body)
+        return {"success": True, "task": updated_task, "file_path": task_path}
     except Exception as e:
         return {"success": False, "error": f"Failed to write task file: {e}"}
 
 
-def completeTaskFile(
-    taskPath: str,
-    logsDir: str,
+def complete_task_file(
+    task_path: str,
+    logs_dir: str,
 ) -> TaskOperationResult:
     """Complete a task by moving its file from board/ to logs/ and adding completedAt."""
 
-    doc = readTaskFile(taskPath)
+    doc = read_task_file(task_path)
     if not doc:
-        return {"success": False, "error": f"Failed to read task file: {taskPath}"}
+        return {"success": False, "error": f"Failed to read task file: {task_path}"}
 
     now = datetime.now().isoformat()
 
@@ -278,49 +278,49 @@ def completeTaskFile(
 
     completed_task = Task.model_validate(task_data)
 
-    dest_path = os.path.join(logsDir, os.path.basename(taskPath))
+    dest_path = os.path.join(logs_dir, os.path.basename(task_path))
     completed_body = doc.body
 
     if doc.task.type == "epic":
-        board_dir = os.path.dirname(taskPath)
+        board_dir = os.path.dirname(task_path)
         child_ids = _extract_epic_child_task_ids(doc.task)
-        child_tasks = _resolve_child_tasks(doc.task.id, child_ids, board_dir, logsDir)
+        child_tasks = _resolve_child_tasks(doc.task.id, child_ids, board_dir, logs_dir)
         child_tasks_section = _build_child_tasks_section(child_tasks)
         completed_body = _append_body_section(doc.body, child_tasks_section)
 
     try:
-        os.makedirs(logsDir, exist_ok=True)
-        writeTaskFile(dest_path, completed_task, completed_body)
-        os.remove(taskPath)
-        return {"success": True, "task": completed_task, "filePath": dest_path}
+        os.makedirs(logs_dir, exist_ok=True)
+        write_task_file(dest_path, completed_task, completed_body)
+        os.remove(task_path)
+        return {"success": True, "task": completed_task, "file_path": dest_path}
     except Exception as e:
         return {"success": False, "error": f"Failed to complete task: {e}"}
 
 
-def deleteTaskFile(taskPath: str) -> TaskOperationResult:
+def delete_task_file(task_path: str) -> TaskOperationResult:
     """Delete a task file from disk."""
 
-    doc = readTaskFile(taskPath)
+    doc = read_task_file(task_path)
     if not doc:
-        return {"success": False, "error": f"Failed to read task file: {taskPath}"}
+        return {"success": False, "error": f"Failed to read task file: {task_path}"}
 
     try:
-        os.remove(taskPath)
+        os.remove(task_path)
         return {"success": True, "task": doc.task}
     except Exception as e:
         return {"success": False, "error": f"Failed to delete task file: {e}"}
 
 
-def appendLog(
-    taskPath: str,
+def append_log(
+    task_path: str,
     entry: str,
     agent: str | None = None,
 ) -> TaskOperationResult:
     """Append a timestamped log entry to a task file's ## Log section."""
 
-    doc = readTaskFile(taskPath)
+    doc = read_task_file(task_path)
     if not doc:
-        return {"success": False, "error": f"Failed to read task file: {taskPath}"}
+        return {"success": False, "error": f"Failed to read task file: {task_path}"}
 
     now = datetime.now().isoformat()
     attribution = f" [{agent}]" if agent else ""
@@ -347,19 +347,19 @@ def appendLog(
     updated_task = doc.task.model_copy(update={"updated_at": now})
 
     try:
-        writeTaskFile(taskPath, updated_task, body)
-        return {"success": True, "task": updated_task, "filePath": taskPath}
+        write_task_file(task_path, updated_task, body)
+        return {"success": True, "task": updated_task, "file_path": task_path}
     except Exception as e:
         return {"success": False, "error": f"Failed to append log: {e}"}
 
 
-def listTasks(
-    boardDir: str,
+def list_tasks(
+    board_dir: str,
     filters: TaskFilters | None = None,
 ) -> list[TaskDocument]:
     """List tasks from a directory, with optional filters."""
 
-    docs = readTasksDir(boardDir)
+    docs = read_tasks_dir(board_dir)
 
     if filters:
         if filters.get("column"):
@@ -370,8 +370,8 @@ def listTasks(
             docs = [d for d in docs if d.task.priority == filters["priority"]]
         if filters.get("assignee"):
             docs = [d for d in docs if d.task.assignee == filters["assignee"]]
-        if filters.get("parentId"):
-            docs = [d for d in docs if d.task.parent_id == filters["parentId"]]
+        if filters.get("parent_id"):
+            docs = [d for d in docs if d.task.parent_id == filters["parent_id"]]
 
     def sort_key(doc: TaskDocument):
         col = doc.task.column or ""
@@ -382,34 +382,34 @@ def listTasks(
     return docs
 
 
-def findTask(
-    boardDir: str,
-    taskId: str,
+def find_task(
+    board_dir: str,
+    task_id: str,
 ) -> TaskDocument | None:
     """Find a task by ID in a directory."""
 
     # Fast path: try convention-based filename
-    direct_path = os.path.join(boardDir, taskFileName(taskId))
-    direct_doc = readTaskFile(direct_path)
-    if direct_doc and direct_doc.task.id == taskId:
+    direct_path = os.path.join(board_dir, task_file_name(task_id))
+    direct_doc = read_task_file(direct_path)
+    if direct_doc and direct_doc.task.id == task_id:
         return direct_doc
 
     # Slow path: scan all files
-    docs = readTasksDir(boardDir)
+    docs = read_tasks_dir(board_dir)
     for d in docs:
-        if d.task.id == taskId:
+        if d.task.id == task_id:
             return d
     return None
 
 
-def searchTaskFiles(
-    boardDir: str,
+def search_task_files(
+    board_dir: str,
     query: str,
 ) -> list[TaskDocument]:
     """Search tasks by query string across title, description, and body."""
 
     normalized_query = query.lower()
-    docs = readTasksDir(boardDir)
+    docs = read_tasks_dir(board_dir)
 
     results: list[TaskDocument] = []
     for doc in docs:
@@ -427,9 +427,9 @@ def searchTaskFiles(
     return results
 
 
-def searchLogs(
-    logsDir: str,
+def search_logs(
+    logs_dir: str,
     query: str,
 ) -> list[TaskDocument]:
     """Search completed task logs by query string."""
-    return searchTaskFiles(logsDir, query)
+    return search_task_files(logs_dir, query)

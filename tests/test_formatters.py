@@ -1,10 +1,7 @@
 import unittest
-from brainfile import (
-    Task,
-    Subtask,
-    formatTaskForGitHub,
-    formatTaskForLinear,
-)
+from brainfile import Task, Subtask
+from brainfile.formatters import format_task_for_github, format_task_for_linear
+
 
 class TestFormatters(unittest.TestCase):
     def setUp(self):
@@ -22,12 +19,12 @@ class TestFormatters(unittest.TestCase):
         )
 
     def test_format_github(self):
-        payload = formatTaskForGitHub(self.task, {
-            "boardTitle": "Test Board",
-            "fromColumn": "todo",
-            "extraLabels": ["automation"]
+        payload = format_task_for_github(self.task, {
+            "board_title": "Test Board",
+            "from_column": "todo",
+            "extra_labels": ["automation"]
         })
-        
+
         self.assertEqual(payload["title"], "[task-1] Fix bug")
         self.assertIn("The bug description", payload["body"])
         self.assertIn("- [x] Subtask 1", payload["body"])
@@ -36,7 +33,7 @@ class TestFormatters(unittest.TestCase):
         self.assertIn("**Column:** todo", payload["body"])
         self.assertIn("## Related Files", payload["body"])
         self.assertIn("`src/main.py`", payload["body"])
-        
+
         self.assertIn("bug", payload["labels"])
         self.assertIn("urgent", payload["labels"])
         self.assertIn("priority:high", payload["labels"])
@@ -44,15 +41,15 @@ class TestFormatters(unittest.TestCase):
         self.assertEqual(payload["state"], "closed")
 
     def test_format_linear(self):
-        payload = formatTaskForLinear(self.task, {
-            "boardTitle": "Test Board",
-            "fromColumn": "todo",
+        payload = format_task_for_linear(self.task, {
+            "board_title": "Test Board",
+            "from_column": "todo",
         })
-        
-        self.assertEqual(payload["title"], "Fix bug") # Linear defaults to no ID
+
+        self.assertEqual(payload["title"], "Fix bug")  # Linear defaults to no ID
         self.assertIn("The bug description", payload["description"])
         self.assertIn("- [x] Subtask 1", payload["description"])
-        self.assertEqual(payload["priority"], 2) # high -> 2
+        self.assertEqual(payload["priority"], 2)  # high -> 2
         self.assertIn("bug", payload["labelNames"])
         self.assertEqual(payload["stateName"], "Done")
 

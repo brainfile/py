@@ -159,9 +159,6 @@ class WatchResult:
     error: WatchError | None = None
     """Startup error, if any"""
 
-    def isActive(self) -> bool:
-        """Compatibility alias matching the core watcher API."""
-        return self.is_active()
 
 
 def is_brainfile_name(filename: str) -> bool:

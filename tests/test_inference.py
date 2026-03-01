@@ -5,10 +5,10 @@ import pytest
 from brainfile import (
     BrainfileType,
     RendererType,
-    SchemaHints,
     infer_renderer,
     infer_type,
 )
+from brainfile.schema_hints import SchemaHints
 
 # Note: SchemaHints tests have been moved to test_schema_hints.py
 # This file focuses on type and renderer inference logic
