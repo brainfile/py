@@ -217,7 +217,10 @@ from .workspace import (
     get_log_file_path,
     get_task_file_path,
     is_workspace,
+    parse_board_config,
     read_board_config,
+    serialize_board_config,
+    write_board_config,
 )
 
 # =============================================================================
@@ -305,7 +308,10 @@ __all__ = [
     "extract_description",
     "extract_log",
     "compose_body",
+    "parse_board_config",
     "read_board_config",
+    "serialize_board_config",
+    "write_board_config",
     # Board validation
     "get_board_types",
     "validate_type",

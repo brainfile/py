@@ -307,6 +307,7 @@ class AgentInstructions(_ModelMixin):
 
     instructions: list[str] = field(default_factory=list)
     llm_notes: str | None = None
+    identity: str | None = None
 
 
 @dataclass

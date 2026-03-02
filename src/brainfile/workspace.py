@@ -19,8 +19,11 @@ import os
 import re
 from dataclasses import dataclass
 
+from io import StringIO
+
 from .models import BoardConfig
 from .parser import BrainfileParser
+from ._yaml import create_yaml
 from .task_file import read_task_file, read_tasks_dir, task_file_name
 
 
@@ -153,3 +156,85 @@ def read_board_config(brainfile_path: str) -> BoardConfig:
         raise ValueError(f"Failed to parse brainfile: {brainfile_path}")
 
     return BoardConfig.model_validate(data)
+
+
+def parse_board_config(content: str) -> tuple[BoardConfig, str]:
+    """Parse raw board config file content into a (BoardConfig, body) tuple.
+
+    The content must be a markdown string with YAML frontmatter delimited by ``---``.
+    Returns the parsed config and the body text after the frontmatter.
+
+    Raises :class:`ValueError` for invalid inputs.
+    """
+
+    lines = content.split("\n")
+
+    # Must start with frontmatter delimiter
+    if not lines or lines[0].strip() != "---":
+        raise ValueError("Content does not start with YAML frontmatter delimiter")
+
+    # Find closing delimiter
+    end_index = -1
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end_index = i
+            break
+
+    if end_index == -1:
+        raise ValueError("Missing closing YAML frontmatter delimiter")
+
+    yaml_content = "\n".join(lines[1:end_index])
+    body_content = "\n".join(lines[end_index + 1 :])
+
+    yaml = create_yaml()
+    try:
+        parsed = yaml.load(StringIO(yaml_content))
+    except Exception as exc:
+        raise ValueError(f"Failed to parse YAML frontmatter: {exc}") from exc
+
+    if not parsed or not isinstance(parsed, dict):
+        raise ValueError("YAML frontmatter is empty or not a mapping")
+
+    config = BoardConfig.model_validate(parsed)
+
+    # Trim a single leading blank line after frontmatter (convention)
+    body = body_content[1:] if body_content.startswith("\n") else body_content
+
+    return config, body
+
+
+def serialize_board_config(config: BoardConfig, body: str = "") -> str:
+    """Serialize a BoardConfig and body into a markdown string with YAML frontmatter."""
+
+    config_dict = config.model_dump(by_alias=True, exclude_none=True)
+
+    yaml = create_yaml()
+    buf = StringIO()
+    yaml.dump(config_dict, buf)
+    yaml_str = buf.getvalue()
+    if yaml_str and not yaml_str.endswith("\n"):
+        yaml_str += "\n"
+
+    parts: list[str] = ["---\n", yaml_str, "---\n"]
+
+    if body:
+        # Ensure a blank line between frontmatter and body
+        parts.append("\n")
+        parts.append(body)
+        # Ensure trailing newline
+        if not body.endswith("\n"):
+            parts.append("\n")
+
+    return "".join(parts)
+
+
+def write_board_config(file_path: str, config: BoardConfig, body: str = "") -> None:
+    """Write a board config to disk as a markdown file with YAML frontmatter."""
+
+    parent_dir = os.path.dirname(file_path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+
+    content = serialize_board_config(config, body)
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(content)
