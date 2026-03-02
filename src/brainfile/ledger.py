@@ -8,9 +8,7 @@ import os
 import warnings
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import TypeVar
-
-from pydantic import BaseModel
+from typing import Any
 
 from ._time import utc_now_iso
 from .models import Deliverable, Task, TaskDocument
@@ -31,8 +29,6 @@ from .types_ledger import (
 LEDGER_FILE_NAME = "ledger.jsonl"
 EPOCH_ISO = "1970-01-01T00:00:00.000Z"
 _LEGACY_WARNING_TRACKER: set[str] = set()
-
-_M = TypeVar("_M", bound=BaseModel)
 
 
 def _get_ledger_path(logs_dir: str) -> str:
@@ -333,17 +329,23 @@ def _read_legacy_markdown_ledger(logs_dir: str) -> list[LedgerRecord]:
             or doc.task.created_at
             or EPOCH_ISO
         )
-        options = BuildLedgerRecordOptions(completedAt=completed_at)
+        options = BuildLedgerRecordOptions(completed_at=completed_at)
         records.append(build_ledger_record(doc.task, doc.body, options))
     return records
 
 
-def _normalize_model(cls: type[_M], value: _M | Mapping[str, object] | None) -> _M:
+def _normalize_model(cls: type, value: Any) -> Any:
+    """Normalize a value to the given model class.
+
+    Accepts an instance, a dict, or None (returns default instance).
+    """
     if value is None:
         return cls()
     if isinstance(value, cls):
         return value
-    return cls.model_validate(value)
+    if isinstance(value, Mapping):
+        return cls.model_validate(dict(value))
+    return cls()
 
 
 def build_ledger_record(
@@ -389,10 +391,10 @@ def build_ledger_record(
         id=task.id,
         type=_normalize_ledger_type(task),
         title=task.title,
-        filesChanged=effective_files_changed,
-        createdAt=created_at,
-        completedAt=completed_at,
-        cycleTimeHours=_compute_cycle_time_hours(created_at, completed_at),
+        files_changed=effective_files_changed,
+        created_at=created_at,
+        completed_at=completed_at,
+        cycle_time_hours=_compute_cycle_time_hours(created_at, completed_at),
         summary=summary,
     )
 
@@ -428,7 +430,7 @@ def append_ledger_record(logs_dir: str, record: LedgerRecord) -> str:
 
     os.makedirs(logs_dir, exist_ok=True)
     ledger_path = _get_ledger_path(logs_dir)
-    payload = record.model_dump(by_alias=True, exclude_none=True, mode="json")
+    payload = record.model_dump(by_alias=True, exclude_none=True)
     line = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
     with open(ledger_path, "a", encoding="utf-8") as file:
         file.write(f"{line}\n")
@@ -574,7 +576,7 @@ def get_task_context(
 
         matched_files = _matched_files_for_scope(scope_files, _collect_record_files(record))
         if matched_files:
-            entries.append(TaskContextEntry(record=record, matchedFiles=matched_files))
+            entries.append(TaskContextEntry(record=record, matched_files=matched_files))
 
     entries.sort(key=lambda entry: _timestamp_or(entry.record.completed_at, 0), reverse=True)
 

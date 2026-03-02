@@ -132,7 +132,7 @@ class TestColumnConfig:
 
     def test_completion_column(self):
         """Test creating a completion column."""
-        col = ColumnConfig(id="done", title="Done", completionColumn=True)
+        col = ColumnConfig(id="done", title="Done", completion_column=True)
         assert col.completion_column is True
 
 

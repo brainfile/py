@@ -81,7 +81,7 @@ def parse_task_content(content: str) -> TaskDocument | None:
 def serialize_task_content(task: Task, body: str = "") -> str:
     """Serialize a task and body into v2 markdown file content."""
 
-    task_dict = task.model_dump(exclude_none=True, by_alias=True, mode="json")
+    task_dict = task.model_dump(exclude_none=True, by_alias=True)
 
     yaml = create_yaml()
     buf = StringIO()

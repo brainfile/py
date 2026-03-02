@@ -156,7 +156,7 @@ def _write_task_file_exclusive(file_path: str, task: Task, body: str) -> None:
 
 def _rollback_ledger_append(logs_dir: str, record: LedgerRecord) -> None:
     ledger_path = os.path.join(logs_dir, "ledger.jsonl")
-    payload = record.model_dump(by_alias=True, exclude_none=True, mode="json")
+    payload = record.model_dump(by_alias=True, exclude_none=True)
 
     appended_line = json.dumps(payload, separators=(",", ":"), ensure_ascii=False) + "\n"
     appended_bytes = len(appended_line.encode("utf-8"))
@@ -275,12 +275,12 @@ def add_task_file(
         priority=input.get("priority"),
         tags=input.get("tags"),
         assignee=input.get("assignee"),
-        dueDate=input.get("due_date"),
-        relatedFiles=input.get("related_files"),
+        due_date=input.get("due_date"),
+        related_files=input.get("related_files"),
         template=input.get("template"),
-        parentId=input.get("parent_id", "").strip() if input.get("parent_id") else None,
+        parent_id=input.get("parent_id", "").strip() if input.get("parent_id") else None,
         subtasks=subtasks,
-        createdAt=now,
+        created_at=now,
     )
 
     file_path = os.path.join(board_dir, task_file_name(task_id))
@@ -356,10 +356,10 @@ def complete_task_file(
 
     options = BuildLedgerRecordOptions(
         summary=summary,
-        filesChanged=files_changed,
-        completedAt=now,
-        columnHistory=column_history,
-        validationAttempts=validation_attempts,
+        files_changed=files_changed,
+        completed_at=now,
+        column_history=column_history,
+        validation_attempts=validation_attempts,
     )
     record = build_ledger_record(completed_task, doc.body, options)
 

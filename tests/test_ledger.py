@@ -77,9 +77,9 @@ def test_build_ledger_record_from_task_and_options() -> None:
         "## Summary\nImplemented ledger internals.\n",
         BuildLedgerRecordOptions(
             summary="Completed implementation and tests",
-            filesChanged=["core/src/ledger.ts", "core/src/__tests__/ledger.test.ts"],
-            completedAt="2026-01-02T00:00:00.000Z",
-            columnHistory=["todo", "in-progress", "done"],
+            files_changed=["core/src/ledger.ts", "core/src/__tests__/ledger.test.ts"],
+            completed_at="2026-01-02T00:00:00.000Z",
+            column_history=["todo", "in-progress", "done"],
         ),
     )
 
@@ -151,9 +151,9 @@ def test_read_ledger_falls_back_to_legacy_markdown_logs(tmp_path: pathlib.Path) 
     task = Task(
         id="task-legacy-1",
         title="Legacy completed task",
-        completedAt="2026-01-03T10:00:00.000Z",
-        createdAt="2026-01-03T08:00:00.000Z",
-        relatedFiles=["src/legacy.ts"],
+        completed_at="2026-01-03T10:00:00.000Z",
+        created_at="2026-01-03T08:00:00.000Z",
+        related_files=["src/legacy.ts"],
     )
     write_task_file(
         str(logs_dir / "task-legacy-1.md"),
@@ -217,11 +217,11 @@ def test_query_ledger_filters(tmp_path: pathlib.Path) -> None:
         LedgerQueryFilters(
             assignee="alice",
             tags=["ledger"],
-            dateRange=LedgerDateRange(
+            date_range=LedgerDateRange(
                 from_="2026-02-01T00:00:00.000Z",
                 to="2026-02-28T23:59:59.999Z",
             ),
-            contractStatus="done",
+            contract_status="done",
             files=["src/ledger.ts"],
         ),
     )

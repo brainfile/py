@@ -1,15 +1,203 @@
 """
-Pydantic data models for the Brainfile protocol.
+Data models for the Brainfile protocol.
 
 Core data structures: BoardConfig, Task, TaskDocument, Contract, and related types.
+
+These are plain dataclasses (no Pydantic dependency). Each model supports:
+- Construction via keyword arguments (snake_case)
+- Construction via ``Model.model_validate(dict)`` for camelCase or snake_case dicts
+- Serialization via ``model.model_dump(by_alias=True, exclude_none=True)``
+- Shallow copy via ``model.model_copy(update={...})``
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field, fields, asdict
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from ._keys import keys_to_camel, keys_to_snake, snake_to_camel, camel_to_snake
+
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+
+def _strip_none(d: dict[str, Any]) -> dict[str, Any]:
+    """Remove keys whose value is None."""
+    return {k: v for k, v in d.items() if v is not None}
+
+
+class _ModelMixin:
+    """Mixin providing Pydantic-compatible class methods on plain dataclasses."""
+
+    @classmethod
+    def model_validate(cls, data: dict[str, Any] | Any) -> Any:
+        """Construct an instance from a dict (camelCase or snake_case keys)."""
+        if isinstance(data, cls):
+            return data
+        if not isinstance(data, dict):
+            raise TypeError(f"Expected dict, got {type(data).__name__}")
+        return cls(**_resolve_fields(cls, data))
+
+    def model_dump(
+        self,
+        by_alias: bool = False,
+        exclude_none: bool = False,
+        mode: str | None = None,
+    ) -> dict[str, Any]:
+        """Serialize to a plain dict."""
+        result = _dataclass_to_dict(self)
+        if by_alias:
+            result = keys_to_camel(result)
+        if exclude_none:
+            result = _deep_strip_none(result)
+        return result
+
+    def model_copy(self, update: dict[str, Any] | None = None) -> Any:
+        """Return a shallow copy with optional field overrides."""
+        data = _dataclass_to_dict(self)
+        if update:
+            data.update(update)
+        return self.__class__(**data)
+
+
+def _dataclass_to_dict(obj: Any) -> dict[str, Any]:
+    """Convert a dataclass to a dict, recursing into nested dataclasses and lists."""
+    if not hasattr(obj, "__dataclass_fields__"):
+        return obj
+    result: dict[str, Any] = {}
+    for f in fields(obj):
+        value = getattr(obj, f.name)
+        result[f.name] = _serialize_value(value)
+    return result
+
+
+def _serialize_value(value: Any) -> Any:
+    """Serialize a value for dict output."""
+    if value is None:
+        return None
+    if isinstance(value, Enum):
+        return value.value
+    if hasattr(value, "__dataclass_fields__"):
+        return _dataclass_to_dict(value)
+    if isinstance(value, list):
+        return [_serialize_value(item) for item in value]
+    if isinstance(value, dict):
+        return {k: _serialize_value(v) for k, v in value.items()}
+    return value
+
+
+def _deep_strip_none(d: dict[str, Any]) -> dict[str, Any]:
+    """Recursively remove None-valued keys."""
+    result: dict[str, Any] = {}
+    for k, v in d.items():
+        if v is None:
+            continue
+        if isinstance(v, dict):
+            result[k] = _deep_strip_none(v)
+        elif isinstance(v, list):
+            result[k] = [
+                _deep_strip_none(item) if isinstance(item, dict) else item
+                for item in v
+            ]
+        else:
+            result[k] = v
+    return result
+
+
+def _resolve_fields(cls: type, data: dict[str, Any]) -> dict[str, Any]:
+    """Map a dict (with camelCase or snake_case keys) to dataclass constructor kwargs."""
+    # Build a lookup of all field names
+    field_names = {f.name for f in fields(cls)}
+    kwargs: dict[str, Any] = {}
+
+    for key, value in data.items():
+        # Try the key as-is first (snake_case)
+        if key in field_names:
+            kwargs[key] = _coerce_field(cls, key, value)
+            continue
+        # Try converting from camelCase
+        snake_key = camel_to_snake(key)
+        if snake_key in field_names:
+            kwargs[snake_key] = _coerce_field(cls, snake_key, value)
+            continue
+        # Unknown keys are silently ignored (extra="allow" equivalent)
+
+    return kwargs
+
+
+def _coerce_field(cls: type, field_name: str, value: Any) -> Any:
+    """Coerce a value to the expected type for a field."""
+    # Nested model coercion
+    _NESTED_MODELS: dict[str, dict[str, type]] = {
+        "Task": {
+            "subtasks": Subtask,
+            "contract": Contract,
+        },
+        "Contract": {
+            "deliverables": Deliverable,
+            "validation": ValidationConfig,
+            "context": ContractContext,
+            "metrics": ContractMetrics,
+        },
+        "ContractPatch": {
+            "deliverables": Deliverable,
+            "validation": ValidationConfig,
+            "context": ContractContext,
+            "metrics": ContractMetrics,
+        },
+        "BoardConfig": {
+            "columns": ColumnConfig,
+            "agent": AgentInstructions,
+            "rules": Rules,
+        },
+        "Rules": {
+            "always": Rule,
+            "never": Rule,
+            "prefer": Rule,
+            "context": Rule,
+        },
+        "TaskDocument": {
+            "task": Task,
+        },
+        "TaskTemplate": {
+            "template": Task,
+            "variables": TemplateVariable,
+        },
+        "TemplateConfig": {
+            "built_in_templates": TaskTemplate,
+            "user_templates": TaskTemplate,
+        },
+        "TaskContextEntry": {
+            "record": None,  # handled via LedgerRecord in types_ledger
+        },
+    }
+
+    cls_name = cls.__name__
+    model_map = _NESTED_MODELS.get(cls_name, {})
+
+    if field_name in model_map:
+        target_cls = model_map[field_name]
+        if target_cls is None:
+            return value
+        if isinstance(value, list):
+            return [
+                target_cls.model_validate(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+        if isinstance(value, dict):
+            return target_cls.model_validate(value)
+
+    # Special handling for 'types' field in BoardConfig (dict of TypeEntry)
+    if cls_name == "BoardConfig" and field_name == "types" and isinstance(value, dict):
+        return {
+            k: TypeEntry.model_validate(v) if isinstance(v, dict) else v
+            for k, v in value.items()
+        }
+
+    return value
 
 
 # =============================================================================
@@ -21,7 +209,7 @@ class BrainfileType(str, Enum):
     """
     Brainfile type names.
 
-    The type system is OPEN — any string value is valid.
+    The type system is OPEN -- any string value is valid.
     These are reference examples from official schemas.
     """
 
@@ -65,19 +253,17 @@ class TemplateType(str, Enum):
 # =============================================================================
 
 
-class Rule(BaseModel):
+@dataclass
+class Rule(_ModelMixin):
     """Rule definition for project guidelines."""
 
-    model_config = ConfigDict(populate_by_name=True)
-
-    id: int
-    rule: str
+    id: int = 0
+    rule: str = ""
 
 
-class Rules(BaseModel):
+@dataclass
+class Rules(_ModelMixin):
     """Rules structure with different priority levels."""
-
-    model_config = ConfigDict(populate_by_name=True)
 
     always: list[Rule] | None = None
     never: list[Rule] | None = None
@@ -85,30 +271,27 @@ class Rules(BaseModel):
     context: list[Rule] | None = None
 
 
-class AgentInstructions(BaseModel):
+@dataclass
+class AgentInstructions(_ModelMixin):
     """AI agent instructions."""
 
-    model_config = ConfigDict(populate_by_name=True)
-
-    instructions: list[str]
-    llm_notes: str | None = Field(default=None, alias="llmNotes")
+    instructions: list[str] = field(default_factory=list)
+    llm_notes: str | None = None
 
 
-class StatsConfig(BaseModel):
+@dataclass
+class StatsConfig(_ModelMixin):
     """Statistics configuration."""
-
-    model_config = ConfigDict(populate_by_name=True)
 
     columns: list[str] | None = None
 
 
-class Subtask(BaseModel):
+@dataclass
+class Subtask(_ModelMixin):
     """Subtask definition used by tasks."""
 
-    model_config = ConfigDict(populate_by_name=True)
-
-    id: str
-    title: str
+    id: str = ""
+    title: str = ""
     completed: bool = False
 
 
@@ -117,118 +300,60 @@ class Subtask(BaseModel):
 # =============================================================================
 
 
-class Deliverable(BaseModel):
+@dataclass
+class Deliverable(_ModelMixin):
     """Represents a single deliverable in a contract."""
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-    type: str = Field(
-        description="Deliverable type: 'file' | 'test' | 'doc' | 'link' | 'other' | custom"
-    )
-    path: str = Field(description="Path to deliverable (file path, URL, etc.)")
-    description: str | None = Field(
-        default=None,
-        description="Human-readable description of deliverable"
-    )
+    type: str = ""
+    path: str = ""
+    description: str | None = None
 
 
-class ValidationConfig(BaseModel):
+@dataclass
+class ValidationConfig(_ModelMixin):
     """Commands and configuration for validating contract deliverables."""
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-    commands: list[str] | None = Field(
-        default=None,
-        description="Shell commands to run for validation (e.g., tests, linting)"
-    )
+    commands: list[str] | None = None
 
 
-class ContractContext(BaseModel):
+@dataclass
+class ContractContext(_ModelMixin):
     """Contextual information for understanding task requirements."""
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-    background: str | None = Field(
-        default=None,
-        description="Background information or requirements"
-    )
-    relevant_files: list[str] | None = Field(
-        default=None,
-        alias="relevantFiles",
-        description="Files relevant to understanding the task"
-    )
-    out_of_scope: list[str] | None = Field(
-        default=None,
-        alias="outOfScope",
-        description="Items explicitly out of scope"
-    )
+    background: str | None = None
+    relevant_files: list[str] | None = None
+    out_of_scope: list[str] | None = None
 
 
-class ContractMetrics(BaseModel):
+@dataclass
+class ContractMetrics(_ModelMixin):
     """Metrics for tracking contract lifecycle and performance."""
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-    picked_up_at: str | None = Field(
-        default=None,
-        alias="pickedUpAt",
-        description="ISO 8601 timestamp when agent picked up task"
-    )
-    delivered_at: str | None = Field(
-        default=None,
-        alias="deliveredAt",
-        description="ISO 8601 timestamp when deliverables submitted"
-    )
-    duration: int | None = Field(
-        default=None,
-        description="Duration in milliseconds from pickup to delivery"
-    )
-    rework_count: int | None = Field(
-        default=None,
-        alias="reworkCount",
-        description="Number of times contract was reworked"
-    )
+    picked_up_at: str | None = None
+    delivered_at: str | None = None
+    duration: int | None = None
+    rework_count: int | None = None
 
 
 ContractStatus = Literal["draft", "ready", "in_progress", "delivered", "done", "failed"]
 """Contract status type."""
 
 
-class Contract(BaseModel):
+@dataclass
+class Contract(_ModelMixin):
     """Complete contract specification for agent task execution."""
 
-    model_config = ConfigDict(populate_by_name=True, extra="allow")
-
-    status: ContractStatus = Field(
-        default="draft",
-        description="Current contract status"
-    )
-    deliverables: list[Deliverable] | None = Field(
-        default=None,
-        description="Required deliverables for contract completion"
-    )
-    validation: ValidationConfig | None = Field(
-        default=None,
-        description="Validation configuration and commands"
-    )
-    constraints: list[str] | None = Field(
-        default=None,
-        description="Constraints or requirements (e.g., performance, security)"
-    )
-    context: ContractContext | None = Field(
-        default=None,
-        description="Context and background for understanding requirements"
-    )
-    metrics: ContractMetrics | None = Field(
-        default=None,
-        description="Metrics tracking contract lifecycle"
-    )
+    status: ContractStatus = "draft"
+    deliverables: list[Deliverable] | None = None
+    validation: ValidationConfig | None = None
+    constraints: list[str] | None = None
+    context: ContractContext | None = None
+    metrics: ContractMetrics | None = None
 
 
-class ContractPatch(BaseModel):
+@dataclass
+class ContractPatch(_ModelMixin):
     """Partial update to a contract."""
-
-    model_config = ConfigDict(populate_by_name=True, extra="allow")
 
     status: ContractStatus | None = None
     deliverables: list[Deliverable] | None = None
@@ -243,66 +368,66 @@ class ContractPatch(BaseModel):
 # =============================================================================
 
 
-class Task(BaseModel):
-    """Task definition — the core unit of work in brainfile."""
+@dataclass
+class Task(_ModelMixin):
+    """Task definition -- the core unit of work in brainfile."""
 
-    model_config = ConfigDict(populate_by_name=True)
-
-    id: str
-    title: str
-    parent_id: str | None = Field(
-        default=None,
-        alias="parentId",
-        description="Optional parent task/document ID for parent-child linking",
-    )
+    id: str = ""
+    title: str = ""
+    parent_id: str | None = None
     description: str | None = None
-    related_files: list[str] | None = Field(default=None, alias="relatedFiles")
+    related_files: list[str] | None = None
     assignee: str | None = None
     tags: list[str] | None = None
-    priority: Priority | None = None
-    due_date: str | None = Field(default=None, alias="dueDate")
+    priority: Any = None  # Priority enum or str
+    due_date: str | None = None
     subtasks: list[Subtask] | None = None
-    template: TemplateType | None = None
-    created_at: str | None = Field(default=None, alias="createdAt")
-    updated_at: str | None = Field(default=None, alias="updatedAt")
-    completed_at: str | None = Field(default=None, alias="completedAt")
-    column: str | None = Field(default=None, description="Column ID from frontmatter")
-    position: int | None = Field(default=None, description="Position within column for ordering")
-    contract: Contract | None = Field(default=None, description="Agent contract specification")
-    type: str | None = Field(default=None, description="Custom task type (e.g., 'epic', 'adr')")
+    template: Any = None  # TemplateType enum or str
+    created_at: str | None = None
+    updated_at: str | None = None
+    completed_at: str | None = None
+    column: str | None = None
+    position: int | None = None
+    contract: Contract | None = None
+    type: str | None = None
+
+    @classmethod
+    def model_validate(cls, data: dict[str, Any] | Any) -> Task:
+        if isinstance(data, cls):
+            return data
+        if not isinstance(data, dict):
+            raise TypeError(f"Expected dict, got {type(data).__name__}")
+        return cls(**_resolve_fields(cls, data))
 
 
-class TemplateVariable(BaseModel):
+@dataclass
+class TemplateVariable(_ModelMixin):
     """Variable definition for task templates."""
 
-    model_config = ConfigDict(populate_by_name=True)
-
-    name: str
-    description: str
-    default_value: str | None = Field(default=None, alias="defaultValue")
+    name: str = ""
+    description: str = ""
+    default_value: str | None = None
     required: bool | None = None
 
 
-class TaskTemplate(BaseModel):
+@dataclass
+class TaskTemplate(_ModelMixin):
     """Task template definition."""
 
-    model_config = ConfigDict(populate_by_name=True)
-
-    id: str
-    name: str
-    description: str
-    template: Task
+    id: str = ""
+    name: str = ""
+    description: str = ""
+    template: Task = field(default_factory=Task)
     variables: list[TemplateVariable] | None = None
-    is_built_in: bool | None = Field(default=None, alias="isBuiltIn")
+    is_built_in: bool | None = None
 
 
-class TemplateConfig(BaseModel):
+@dataclass
+class TemplateConfig(_ModelMixin):
     """Template configuration."""
 
-    model_config = ConfigDict(populate_by_name=True)
-
-    built_in_templates: list[TaskTemplate] = Field(alias="builtInTemplates")
-    user_templates: list[TaskTemplate] = Field(alias="userTemplates")
+    built_in_templates: list[TaskTemplate] = field(default_factory=list)
+    user_templates: list[TaskTemplate] = field(default_factory=list)
 
 
 # =============================================================================
@@ -310,7 +435,8 @@ class TemplateConfig(BaseModel):
 # =============================================================================
 
 
-class TaskDocument(BaseModel):
+@dataclass
+class TaskDocument(_ModelMixin):
     """
     Container for a task file (board/*.md or logs/*.md).
 
@@ -319,15 +445,9 @@ class TaskDocument(BaseModel):
     - Body (Markdown): Description + logs
     """
 
-    model_config = ConfigDict(populate_by_name=True, extra="allow")
-
-    task: Task
-    body: str = Field(description="Markdown body: description + logs")
-    file_path: str | None = Field(
-        default=None,
-        alias="filePath",
-        description="Full path to task file"
-    )
+    task: Task = field(default_factory=Task)
+    body: str = ""
+    file_path: str | None = None
 
 
 # =============================================================================
@@ -335,46 +455,31 @@ class TaskDocument(BaseModel):
 # =============================================================================
 
 
-class ColumnConfig(BaseModel):
+@dataclass
+class ColumnConfig(_ModelMixin):
     """Configuration for a single board column. Columns don't embed tasks."""
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-    id: str = Field(description="Unique column identifier")
-    title: str = Field(description="Human-readable column title")
-    order: int | None = Field(default=None, description="Sort order for column display")
-    completion_column: bool | None = Field(
-        default=False,
-        alias="completionColumn",
-        description="If true, marks this as a completion/archive column"
-    )
+    id: str = ""
+    title: str = ""
+    order: int | None = None
+    completion_column: bool | None = False
 
 
-class TypeEntry(BaseModel):
+@dataclass
+class TypeEntry(_ModelMixin):
     """Configuration for a custom task type in strict mode."""
 
-    model_config = ConfigDict(populate_by_name=True, extra="forbid")
-
-    id_prefix: str = Field(
-        alias="idPrefix",
-        description="ID prefix for this type (e.g., 'epic', 'adr', 'spike')"
-    )
-    completable: bool | None = Field(
-        default=True,
-        description="Whether tasks of this type can be marked complete"
-    )
-    schema_url: str | None = Field(
-        default=None,
-        alias="schema",
-        description="Optional JSON schema URI for type validation"
-    )
+    id_prefix: str = ""
+    completable: bool | None = True
+    schema_url: str | None = None
 
 
 TypesConfig = dict[str, TypeEntry]
 """Type configuration mapping."""
 
 
-class BoardConfig(BaseModel):
+@dataclass
+class BoardConfig(_ModelMixin):
     """
     Board configuration (from .brainfile/brainfile.md).
 
@@ -384,29 +489,15 @@ class BoardConfig(BaseModel):
     - Archived tasks: .brainfile/logs/*.md (individual files)
     """
 
-    model_config = ConfigDict(populate_by_name=True, extra="allow")
-
-    title: str | None = Field(default=None, description="Board title")
-    type: Literal["board"] = Field(default="board")
-    columns: list[ColumnConfig] = Field(
-        description="Column definitions (no embedded tasks)"
-    )
-    strict: bool | None = Field(
-        default=False,
-        description="Enable strict type and column validation"
-    )
-    types: TypesConfig | None = Field(
-        default=None,
-        description="Custom task type definitions (strict mode)"
-    )
-    stats_config: dict | None = Field(
-        default=None,
-        alias="statsConfig",
-        description="Statistics and aggregation configuration"
-    )
-    agent: AgentInstructions | None = Field(default=None)
-    rules: Rules | None = Field(default=None)
-    metadata: dict | None = Field(default=None)
+    title: str | None = None
+    type: str = "board"
+    columns: list[ColumnConfig] = field(default_factory=list)
+    strict: bool | None = False
+    types: TypesConfig | None = None
+    stats_config: dict | None = None
+    agent: AgentInstructions | None = None
+    rules: Rules | None = None
+    metadata: dict | None = None
 
 
 # =============================================================================

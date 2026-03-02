@@ -15,7 +15,7 @@ class TestFormatters(unittest.TestCase):
                 Subtask(id="st-1", title="Subtask 1", completed=True),
                 Subtask(id="st-2", title="Subtask 2", completed=False),
             ],
-            relatedFiles=["src/main.py"],
+            related_files=["src/main.py"],
         )
 
     def test_format_github(self):
