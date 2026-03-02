@@ -1,14 +1,6 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/brainfile/core/main/logo.png" alt="Brainfile Logo" width="128" height="128">
-</p>
-
 # brainfile
 
-**The Python engine behind [Brainfile](https://brainfile.md).**
-
-This library provides the core logic for managing Brainfile v2 projects: reading/writing task files, managing contracts, validating boards, and querying task state. It is the Python equivalent of [@brainfile/core](https://github.com/brainfile/core) with full API parity.
-
-Used by [Cecli](https://github.com/dwash96/cecli) and other tools that need programmatic access to Brainfile workspaces.
+Python library for the [Brainfile](https://brainfile.md) task coordination protocol. Provides reading/writing task files, managing contracts, validating boards, querying the completion ledger, and full workspace operations. API-equivalent to [@brainfile/core](https://github.com/brainfile/core) (TypeScript).
 
 ## Installation
 
