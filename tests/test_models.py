@@ -1,4 +1,4 @@
-"""Tests for Pydantic models."""
+"""Tests for dataclass models."""
 
 import pytest
 
@@ -17,6 +17,7 @@ from brainfile import (
     TaskDocument,
     TemplateType,
 )
+from brainfile.task_file import parse_task_content, serialize_task_content
 
 
 class TestTask:
@@ -188,3 +189,75 @@ class TestTopLevelExportSurface:
     def test_brainfile_resolution_kind_exported(self):
         assert BrainfileResolutionKind is str
         assert "BrainfileResolutionKind" in __import__("brainfile").__all__
+
+
+class TestExtensionFields:
+    """Extension fields (x-* prefix) survive round-trips through parse/serialize."""
+
+    def test_model_validate_preserves_unknown_keys(self):
+        t = Task.model_validate({
+            "id": "task-1",
+            "title": "Test",
+            "x-otto": {"model_chain": ["gpt-4", "claude"], "status": "running"},
+            "x-cursor": {"tab_id": 42},
+        })
+        assert t._extras == {
+            "x-otto": {"model_chain": ["gpt-4", "claude"], "status": "running"},
+            "x-cursor": {"tab_id": 42},
+        }
+
+    def test_model_dump_includes_extras(self):
+        t = Task.model_validate({
+            "id": "task-1",
+            "title": "Test",
+            "x-otto": {"status": "done"},
+        })
+        d = t.model_dump(by_alias=True, exclude_none=True)
+        assert d["x-otto"] == {"status": "done"}
+        assert "id" in d
+
+    def test_extension_values_are_opaque(self):
+        """brainfile must NOT transform keys inside extension values."""
+        t = Task.model_validate({
+            "id": "task-1",
+            "title": "Test",
+            "x-otto": {"model_chain": ["a"], "retry_count": 3},
+        })
+        d = t.model_dump(by_alias=True, exclude_none=True)
+        # Keys inside x-otto must stay as-is (snake_case), not be camel-cased
+        assert "model_chain" in d["x-otto"]
+        assert "retry_count" in d["x-otto"]
+
+    def test_model_copy_preserves_extras(self):
+        t = Task.model_validate({
+            "id": "task-1",
+            "title": "Test",
+            "x-otto": {"status": "running"},
+        })
+        copy = t.model_copy(update={"title": "Updated"})
+        assert copy.title == "Updated"
+        assert copy._extras == {"x-otto": {"status": "running"}}
+
+    def test_yaml_round_trip(self):
+        """x-* fields survive parse → serialize → parse cycle."""
+        t = Task.model_validate({
+            "id": "task-1",
+            "title": "Test",
+            "x-otto": {"model_chain": ["gpt-4"], "status": "running"},
+        })
+        yaml_out = serialize_task_content(t, "## Description\nHello\n")
+        assert "x-otto:" in yaml_out
+
+        doc = parse_task_content(yaml_out)
+        assert doc.task._extras["x-otto"] == {"model_chain": ["gpt-4"], "status": "running"}
+
+    def test_non_extension_unknown_keys_also_preserved(self):
+        """Any unknown key is preserved, not just x-* prefixed ones."""
+        t = Task.model_validate({
+            "id": "task-1",
+            "title": "Test",
+            "customField": "hello",
+        })
+        assert t._extras == {"customField": "hello"}
+        d = t.model_dump(by_alias=True, exclude_none=True)
+        assert d["customField"] == "hello"

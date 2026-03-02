@@ -55,7 +55,10 @@ def snake_to_camel(key: str) -> str:
     """Convert a snake_case key to camelCase.
 
     Uses the explicit mapping first, then falls back to algorithmic conversion.
+    Extension keys (``x-`` prefix) are passed through unchanged.
     """
+    if key.startswith("x-"):
+        return key
     if key in _SNAKE_TO_CAMEL:
         return _SNAKE_TO_CAMEL[key]
     # Algorithmic fallback: split on underscores
@@ -69,7 +72,10 @@ def camel_to_snake(key: str) -> str:
     """Convert a camelCase key to snake_case.
 
     Uses the explicit mapping first, then falls back to algorithmic conversion.
+    Extension keys (``x-`` prefix) are passed through unchanged.
     """
+    if key.startswith("x-"):
+        return key
     if key in _CAMEL_TO_SNAKE_MAP:
         return _CAMEL_TO_SNAKE_MAP[key]
     # Algorithmic fallback

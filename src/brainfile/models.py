@@ -30,7 +30,16 @@ def _strip_none(d: dict[str, Any]) -> dict[str, Any]:
 
 
 class _ModelMixin:
-    """Mixin providing Pydantic-compatible class methods on plain dataclasses."""
+    """Mixin providing Pydantic-compatible class methods on plain dataclasses.
+
+    Unknown keys passed to ``model_validate()`` are preserved in ``_extras``
+    and merged back during ``model_dump()``.  This enables round-tripping of
+    extension fields (e.g. ``x-otto``, ``x-cursor``) without data loss.
+    """
+
+    def __post_init__(self) -> None:
+        if not hasattr(self, "_extras"):
+            object.__setattr__(self, "_extras", {})
 
     @classmethod
     def model_validate(cls, data: dict[str, Any] | Any) -> Any:
@@ -39,7 +48,10 @@ class _ModelMixin:
             return data
         if not isinstance(data, dict):
             raise TypeError(f"Expected dict, got {type(data).__name__}")
-        return cls(**_resolve_fields(cls, data))
+        resolved, extras = _resolve_fields(cls, data)
+        instance = cls(**resolved)
+        object.__setattr__(instance, "_extras", extras)
+        return instance
 
     def model_dump(
         self,
@@ -47,10 +59,16 @@ class _ModelMixin:
         exclude_none: bool = False,
         mode: str | None = None,
     ) -> dict[str, Any]:
-        """Serialize to a plain dict."""
+        """Serialize to a plain dict, including preserved extension fields."""
         result = _dataclass_to_dict(self)
+        # Merge extras back (extension fields like x-otto) — values are opaque,
+        # only top-level keys are transformed (x- keys pass through unchanged)
+        extras = getattr(self, "_extras", {})
         if by_alias:
             result = keys_to_camel(result)
+        # Inject extras after key transform — values are opaque (not transformed)
+        if extras:
+            result.update(extras)
         if exclude_none:
             result = _deep_strip_none(result)
         return result
@@ -60,7 +78,9 @@ class _ModelMixin:
         data = _dataclass_to_dict(self)
         if update:
             data.update(update)
-        return self.__class__(**data)
+        copy = self.__class__(**data)
+        object.__setattr__(copy, "_extras", dict(getattr(self, "_extras", {})))
+        return copy
 
 
 def _dataclass_to_dict(obj: Any) -> dict[str, Any]:
@@ -69,6 +89,8 @@ def _dataclass_to_dict(obj: Any) -> dict[str, Any]:
         return obj
     result: dict[str, Any] = {}
     for f in fields(obj):
+        if f.name == "_extras":
+            continue  # merged separately by model_dump()
         value = getattr(obj, f.name)
         result[f.name] = _serialize_value(value)
     return result
@@ -107,11 +129,16 @@ def _deep_strip_none(d: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _resolve_fields(cls: type, data: dict[str, Any]) -> dict[str, Any]:
-    """Map a dict (with camelCase or snake_case keys) to dataclass constructor kwargs."""
+def _resolve_fields(cls: type, data: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Map a dict (with camelCase or snake_case keys) to dataclass constructor kwargs.
+
+    Returns ``(kwargs, extras)`` where extras contains unknown keys preserved
+    for round-tripping (e.g. ``x-otto``, ``x-cursor`` extension fields).
+    """
     # Build a lookup of all field names
     field_names = {f.name for f in fields(cls)}
     kwargs: dict[str, Any] = {}
+    extras: dict[str, Any] = {}
 
     for key, value in data.items():
         # Try the key as-is first (snake_case)
@@ -123,9 +150,10 @@ def _resolve_fields(cls: type, data: dict[str, Any]) -> dict[str, Any]:
         if snake_key in field_names:
             kwargs[snake_key] = _coerce_field(cls, snake_key, value)
             continue
-        # Unknown keys are silently ignored (extra="allow" equivalent)
+        # Preserve unknown keys in extras for round-tripping
+        extras[key] = value
 
-    return kwargs
+    return kwargs, extras
 
 
 def _coerce_field(cls: type, field_name: str, value: Any) -> Any:
@@ -390,14 +418,6 @@ class Task(_ModelMixin):
     position: int | None = None
     contract: Contract | None = None
     type: str | None = None
-
-    @classmethod
-    def model_validate(cls, data: dict[str, Any] | Any) -> Task:
-        if isinstance(data, cls):
-            return data
-        if not isinstance(data, dict):
-            raise TypeError(f"Expected dict, got {type(data).__name__}")
-        return cls(**_resolve_fields(cls, data))
 
 
 @dataclass
