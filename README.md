@@ -38,8 +38,9 @@ Brainfile v2 uses a directory-based structure. Each task is its own markdown fil
 ├── board/                # Active tasks
 │   ├── task-1.md
 │   └── task-2.md
-└── logs/                 # Completed tasks (history)
-    └── task-0.md
+└── logs/                 # Completion history
+    ├── ledger.jsonl      # Unified completion log
+    └── task-0.md         # (legacy) Archived task
 ```
 
 ## Quick Start
@@ -63,7 +64,7 @@ for doc in read_tasks_dir(dirs.board_dir):
     t = doc.task
     print(f"{t.id}: {t.title} [{t.column}]")
 
-# Complete a task (moves to logs/)
+# Complete a task (appends to ledger.jsonl, archives to logs/)
 complete_task_file(result["file_path"], dirs.logs_dir)
 ```
 
