@@ -261,3 +261,44 @@ class TestExtensionFields:
         assert t._extras == {"customField": "hello"}
         d = t.model_dump(by_alias=True, exclude_none=True)
         assert d["customField"] == "hello"
+
+    def test_nested_model_extras_preserved(self):
+        """Extras on nested models (e.g. Contract) survive parent serialization."""
+        t = Task.model_validate({
+            "id": "task-1",
+            "title": "Test",
+            "contract": {
+                "status": "in_progress",
+                "constraints": ["no redis"],
+                "outOfScope": ["monitoring"],
+                "feedback": "fix timeout",
+            },
+        })
+        assert t.contract._extras == {
+            "outOfScope": ["monitoring"],
+            "feedback": "fix timeout",
+        }
+        d = t.model_dump(by_alias=True, exclude_none=True)
+        assert d["contract"]["outOfScope"] == ["monitoring"]
+        assert d["contract"]["feedback"] == "fix timeout"
+
+    def test_nested_extras_yaml_round_trip(self):
+        """Nested model extras survive full YAML round-trip."""
+        t = Task.model_validate({
+            "id": "task-1",
+            "title": "Test",
+            "contract": {
+                "status": "delivered",
+                "outOfScope": ["UI changes"],
+                "feedback": "tests failing on line 42",
+            },
+            "x-otto": {"status": "running"},
+        })
+        yaml_out = serialize_task_content(t, "## Description\nHello\n")
+        assert "outOfScope:" in yaml_out
+        assert "feedback:" in yaml_out
+
+        doc = parse_task_content(yaml_out)
+        assert doc.task.contract._extras["outOfScope"] == ["UI changes"]
+        assert doc.task.contract._extras["feedback"] == "tests failing on line 42"
+        assert doc.task._extras["x-otto"] == {"status": "running"}

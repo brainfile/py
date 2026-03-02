@@ -102,6 +102,8 @@ def _serialize_value(value: Any) -> Any:
         return None
     if isinstance(value, Enum):
         return value.value
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
     if hasattr(value, "__dataclass_fields__"):
         return _dataclass_to_dict(value)
     if isinstance(value, list):
