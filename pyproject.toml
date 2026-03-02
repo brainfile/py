@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "brainfile"
-version = "0.2.0"
+version = "0.2.1"
 description = "Python library for the Brainfile task management protocol"
 readme = "README.md"
 license = "MIT"

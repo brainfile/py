@@ -65,12 +65,13 @@ class TestTaskOperations(unittest.TestCase):
         comp_res = complete_task_file(path, self.logs_dir)
         self.assertTrue(comp_res["success"])
         self.assertFalse(os.path.exists(path))
+        self.assertEqual(comp_res["file_path"], os.path.join(self.logs_dir, "ledger.jsonl"))
         self.assertTrue(os.path.exists(comp_res["file_path"]))
         self.assertIsNotNone(comp_res["task"].completed_at)
 
-        # Check it's in logs
+        # Ledger mode should not move markdown files into logs/
         docs = search_logs(self.logs_dir, "Task 1")
-        self.assertEqual(len(docs), 1)
+        self.assertEqual(len(docs), 0)
 
     def test_complete_epic_with_children(self):
         # Create epic
@@ -86,7 +87,7 @@ class TestTaskOperations(unittest.TestCase):
         add_task_file(self.board_dir, {"id": "task-1", "title": "Child 1", "column": "todo", "parent_id": "epic-1"})
         add_task_file(self.board_dir, {"id": "task-2", "title": "Child 2", "column": "todo", "parent_id": "epic-1"})
 
-        comp_res = complete_task_file(epic_res["file_path"], self.logs_dir)
+        comp_res = complete_task_file(epic_res["file_path"], self.logs_dir, legacy_mode=True)
         self.assertTrue(comp_res["success"])
 
         doc = read_task_file(comp_res["file_path"])

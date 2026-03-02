@@ -11,19 +11,24 @@ This mirrors TS core v2 ``taskOperations.ts``.
 
 from __future__ import annotations
 
+import json
 import os
 import re
-from datetime import datetime
+from contextlib import suppress
 from typing import Literal, TypedDict
 
+from ._time import utc_now_iso
+from .ledger import append_ledger_record, build_ledger_record
 from .models import Task, TaskDocument, Subtask
 from .templates import generate_subtask_id
 from .task_file import (
     read_task_file,
     read_tasks_dir,
+    serialize_task_content,
     task_file_name,
     write_task_file,
 )
+from .types_ledger import BuildLedgerRecordOptions, LedgerRecord
 
 
 class TaskOperationResult(TypedDict, total=False):
@@ -139,6 +144,65 @@ def _build_child_tasks_section(child_tasks: list[ChildTaskSummary]) -> str:
     return "## Child Tasks\n" + "\n".join(lines)
 
 
+def _write_task_file_exclusive(file_path: str, task: Task, body: str) -> None:
+    parent_dir = os.path.dirname(file_path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+
+    content = serialize_task_content(task, body)
+    with open(file_path, "x", encoding="utf-8") as file:
+        file.write(content)
+
+
+def _rollback_ledger_append(logs_dir: str, record: LedgerRecord) -> None:
+    ledger_path = os.path.join(logs_dir, "ledger.jsonl")
+    payload = record.model_dump(by_alias=True, exclude_none=True, mode="json")
+
+    appended_line = json.dumps(payload, separators=(",", ":"), ensure_ascii=False) + "\n"
+    appended_bytes = len(appended_line.encode("utf-8"))
+
+    try:
+        stat = os.stat(ledger_path)
+        new_size = stat.st_size - appended_bytes
+        if new_size >= 0:
+            with open(ledger_path, "rb+") as file:
+                file.truncate(new_size)
+    except Exception:
+        pass
+
+
+def _complete_task_file_legacy(
+    task_path: str,
+    logs_dir: str,
+    doc: TaskDocument,
+    completed_task: Task,
+) -> TaskOperationResult:
+    dest_path = os.path.join(logs_dir, os.path.basename(task_path))
+    completed_body = doc.body
+
+    if doc.task.type == "epic":
+        board_dir = os.path.dirname(task_path)
+        child_ids = _extract_epic_child_task_ids(doc.task)
+        child_tasks = _resolve_child_tasks(doc.task.id, child_ids, board_dir, logs_dir)
+        child_tasks_section = _build_child_tasks_section(child_tasks)
+        completed_body = _append_body_section(doc.body, child_tasks_section)
+
+    try:
+        _write_task_file_exclusive(dest_path, completed_task, completed_body)
+    except FileExistsError:
+        return {"success": False, "error": f"Task already exists in logs: {doc.task.id}"}
+    except Exception as e:
+        return {"success": False, "error": f"Failed to complete task: {e}"}
+
+    try:
+        os.remove(task_path)
+        return {"success": True, "task": completed_task, "file_path": dest_path}
+    except Exception as e:
+        with suppress(Exception):
+            os.remove(dest_path)
+        return {"success": False, "error": f"Failed to finalize completion: {e}"}
+
+
 def generate_next_file_task_id(
     board_dir: str, logs_dir: str | None = None, type_prefix: str = "task"
 ) -> str:
@@ -186,7 +250,7 @@ def add_task_file(
     # Determine ID prefix from type (e.g., type="epic" -> prefix "epic" -> "epic-1")
     type_prefix = input.get("type") or "task"
     task_id = input.get("id") or generate_next_file_task_id(board_dir, logs_dir, type_prefix)
-    now = datetime.now().isoformat()
+    now = utc_now_iso()
 
     # Build subtasks if provided
     subtasks_input = input.get("subtasks")
@@ -239,7 +303,7 @@ def move_task_file(
     if not doc:
         return {"success": False, "error": f"Failed to read task file: {task_path}"}
 
-    now = datetime.now().isoformat()
+    now = utc_now_iso()
     updated_task = doc.task.model_copy(
         update={
             "column": new_column,
@@ -260,41 +324,56 @@ def move_task_file(
 def complete_task_file(
     task_path: str,
     logs_dir: str,
+    legacy_mode: bool = False,
+    summary: str | None = None,
+    files_changed: list[str] | None = None,
+    column_history: list[str] | None = None,
+    validation_attempts: int | None = None,
 ) -> TaskOperationResult:
-    """Complete a task by moving its file from board/ to logs/ and adding completedAt."""
+    """
+    Complete a task by appending to ``logs/ledger.jsonl`` and removing board file.
+
+    When ``legacy_mode`` is True, keeps old behavior of moving markdown files into logs/.
+    """
 
     doc = read_task_file(task_path)
     if not doc:
         return {"success": False, "error": f"Failed to read task file: {task_path}"}
 
-    now = datetime.now().isoformat()
+    now = utc_now_iso()
 
-    # Remove column and position, add completedAt
-    task_data = doc.task.model_dump(by_alias=True)
-    task_data.pop("column", None)
-    task_data.pop("position", None)
-    task_data["completedAt"] = now
-    task_data["updatedAt"] = now
+    completed_task = doc.task.model_copy(
+        update={
+            "column": None,
+            "position": None,
+            "completed_at": now,
+            "updated_at": now,
+        }
+    )
 
-    completed_task = Task.model_validate(task_data)
+    if legacy_mode:
+        return _complete_task_file_legacy(task_path, logs_dir, doc, completed_task)
 
-    dest_path = os.path.join(logs_dir, os.path.basename(task_path))
-    completed_body = doc.body
-
-    if doc.task.type == "epic":
-        board_dir = os.path.dirname(task_path)
-        child_ids = _extract_epic_child_task_ids(doc.task)
-        child_tasks = _resolve_child_tasks(doc.task.id, child_ids, board_dir, logs_dir)
-        child_tasks_section = _build_child_tasks_section(child_tasks)
-        completed_body = _append_body_section(doc.body, child_tasks_section)
+    options = BuildLedgerRecordOptions(
+        summary=summary,
+        filesChanged=files_changed,
+        completedAt=now,
+        columnHistory=column_history,
+        validationAttempts=validation_attempts,
+    )
+    record = build_ledger_record(completed_task, doc.body, options)
 
     try:
-        os.makedirs(logs_dir, exist_ok=True)
-        write_task_file(dest_path, completed_task, completed_body)
-        os.remove(task_path)
-        return {"success": True, "task": completed_task, "file_path": dest_path}
+        ledger_path = append_ledger_record(logs_dir, record)
     except Exception as e:
-        return {"success": False, "error": f"Failed to complete task: {e}"}
+        return {"success": False, "error": f"Failed to append ledger record: {e}"}
+
+    try:
+        os.remove(task_path)
+        return {"success": True, "task": completed_task, "file_path": ledger_path}
+    except Exception as e:
+        _rollback_ledger_append(logs_dir, record)
+        return {"success": False, "error": f"Failed to finalize completion: {e}"}
 
 
 def delete_task_file(task_path: str) -> TaskOperationResult:
@@ -322,7 +401,7 @@ def append_log(
     if not doc:
         return {"success": False, "error": f"Failed to read task file: {task_path}"}
 
-    now = datetime.now().isoformat()
+    now = utc_now_iso()
     attribution = f" [{agent}]" if agent else ""
     log_line = f"- {now}{attribution}: {entry}"
 

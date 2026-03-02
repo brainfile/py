@@ -118,6 +118,21 @@ from .id_gen import (
 )
 
 # =============================================================================
+# Ledger
+# =============================================================================
+
+from .ledger import (
+    append_ledger_record,
+    build_ledger_record,
+    get_file_history,
+    get_task_context,
+    is_ledger_contract_status,
+    normalize_path_value,
+    query_ledger,
+    read_ledger,
+)
+
+# =============================================================================
 # Inference
 # =============================================================================
 
@@ -160,6 +175,18 @@ from .task_operations import (
     move_task_file,
     search_logs,
     search_task_files,
+)
+from .types_ledger import (
+    LEDGER_CONTRACT_STATUSES,
+    BuildLedgerRecordOptions,
+    FileHistoryOptions,
+    LedgerContractStatus,
+    LedgerDateRange,
+    LedgerQueryFilters,
+    LedgerRecord,
+    LedgerRecordType,
+    TaskContextEntry,
+    TaskContextOptions,
 )
 
 # =============================================================================
@@ -321,4 +348,23 @@ __all__ = [
     "is_valid_task_id",
     "is_valid_subtask_id",
     "get_parent_task_id",
+    # Ledger types + operations
+    "LedgerRecordType",
+    "LedgerContractStatus",
+    "LEDGER_CONTRACT_STATUSES",
+    "LedgerRecord",
+    "BuildLedgerRecordOptions",
+    "LedgerDateRange",
+    "LedgerQueryFilters",
+    "FileHistoryOptions",
+    "TaskContextOptions",
+    "TaskContextEntry",
+    "build_ledger_record",
+    "append_ledger_record",
+    "read_ledger",
+    "query_ledger",
+    "get_file_history",
+    "get_task_context",
+    "normalize_path_value",
+    "is_ledger_contract_status",
 ]
