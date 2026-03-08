@@ -1,26 +1,60 @@
-"""
-brainfile - Python library for the Brainfile task management protocol.
-
-File-based task coordination for AI agents. Each task is a markdown file
-with YAML frontmatter in .brainfile/board/ (active) and .brainfile/logs/ (completed).
-
-Example:
-    >>> from brainfile import ensure_dirs, add_task_file, read_tasks_dir, complete_task_file
-    >>>
-    >>> dirs = ensure_dirs(".brainfile/brainfile.md")
-    >>> result = add_task_file(dirs.board_dir, {"title": "Ship it", "column": "todo"})
-    >>> for doc in read_tasks_dir(dirs.board_dir):
-    ...     print(f"{doc.task.id}: {doc.task.title}")
-"""
+"""brainfile public API."""
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.4.1"
 
-# =============================================================================
-# Models
-# =============================================================================
-
+from .board_validation import BoardValidationResult, get_board_types, validate_column, validate_type
+from .discovery import (
+    BRAINFILE_GLOBS,
+    BRAINFILE_PATTERNS,
+    EXCLUDE_DIRS,
+    DiscoveredFile,
+    DiscoveryOptions,
+    DiscoveryResult,
+    WatchError,
+    WatchResult,
+    discover,
+    extract_brainfile_suffix,
+    find_nearest_brainfile,
+    find_primary_brainfile,
+    is_brainfile_name,
+    watch_brainfiles,
+)
+from .files import (
+    BRAINFILE_BASENAME,
+    BRAINFILE_STATE_BASENAME,
+    DOT_BRAINFILE_DIRNAME,
+    DOT_BRAINFILE_GITIGNORE_BASENAME,
+    BrainfileResolutionKind,
+    FoundBrainfile,
+    ResolveBrainfilePathOptions,
+    ensure_dot_brainfile_dir,
+    ensure_dot_brainfile_gitignore,
+    find_brainfile,
+    get_brainfile_state_dir,
+    get_brainfile_state_path,
+    get_dot_brainfile_gitignore_path,
+    resolve_brainfile_path,
+)
+from .id_gen import (
+    extract_task_id_number,
+    generate_next_subtask_id,
+    get_parent_task_id,
+    is_valid_subtask_id,
+    is_valid_task_id,
+)
+from .inference import infer_renderer, infer_type
+from .ledger import (
+    append_ledger_record,
+    build_ledger_record,
+    get_file_history,
+    get_task_context,
+    is_ledger_contract_status,
+    normalize_path_value,
+    query_ledger,
+    read_ledger,
+)
 from .models import (
     AgentInstructions,
     BoardConfig,
@@ -51,103 +85,7 @@ from .models import (
     TypesConfig,
     ValidationConfig,
 )
-
-# =============================================================================
-# Board Validation
-# =============================================================================
-
-from .board_validation import (
-    BoardValidationResult,
-    get_board_types,
-    validate_column,
-    validate_type,
-)
-
-# =============================================================================
-# Discovery
-# =============================================================================
-
-from .discovery import (
-    BRAINFILE_GLOBS,
-    BRAINFILE_PATTERNS,
-    EXCLUDE_DIRS,
-    DiscoveredFile,
-    DiscoveryOptions,
-    DiscoveryResult,
-    WatchError,
-    WatchResult,
-    discover,
-    extract_brainfile_suffix,
-    find_nearest_brainfile,
-    find_primary_brainfile,
-    is_brainfile_name,
-    watch_brainfiles,
-)
-
-# =============================================================================
-# Files
-# =============================================================================
-
-from .files import (
-    BRAINFILE_BASENAME,
-    BRAINFILE_STATE_BASENAME,
-    DOT_BRAINFILE_DIRNAME,
-    DOT_BRAINFILE_GITIGNORE_BASENAME,
-    BrainfileResolutionKind,
-    FoundBrainfile,
-    ResolveBrainfilePathOptions,
-    ensure_dot_brainfile_dir,
-    ensure_dot_brainfile_gitignore,
-    find_brainfile,
-    get_brainfile_state_dir,
-    get_brainfile_state_path,
-    get_dot_brainfile_gitignore_path,
-    resolve_brainfile_path,
-)
-
-# =============================================================================
-# ID Generation
-# =============================================================================
-
-from .id_gen import (
-    extract_task_id_number,
-    generate_next_subtask_id,
-    get_parent_task_id,
-    is_valid_subtask_id,
-    is_valid_task_id,
-)
-
-# =============================================================================
-# Ledger
-# =============================================================================
-
-from .ledger import (
-    append_ledger_record,
-    build_ledger_record,
-    get_file_history,
-    get_task_context,
-    is_ledger_contract_status,
-    normalize_path_value,
-    query_ledger,
-    read_ledger,
-)
-
-# =============================================================================
-# Inference
-# =============================================================================
-
-from .inference import infer_renderer, infer_type
-
-# =============================================================================
-# Parser
-# =============================================================================
-
 from .parser import BrainfileParser, ParseResult
-
-# =============================================================================
-# Task File I/O
-# =============================================================================
-
 from .task_file import (
     parse_task_content,
     read_task_file,
@@ -156,11 +94,6 @@ from .task_file import (
     task_file_name,
     write_task_file,
 )
-
-# =============================================================================
-# Task Operations
-# =============================================================================
-
 from .task_operations import (
     TaskFileInput,
     TaskFilters,
@@ -176,6 +109,14 @@ from .task_operations import (
     search_logs,
     search_task_files,
 )
+from .templates import (
+    BUILT_IN_TEMPLATES,
+    generate_subtask_id,
+    generate_task_id,
+    get_all_template_ids,
+    get_template_by_id,
+    process_template,
+)
 from .types_ledger import (
     LEDGER_CONTRACT_STATUSES,
     BuildLedgerRecordOptions,
@@ -188,24 +129,6 @@ from .types_ledger import (
     TaskContextEntry,
     TaskContextOptions,
 )
-
-# =============================================================================
-# Templates
-# =============================================================================
-
-from .templates import (
-    BUILT_IN_TEMPLATES,
-    generate_subtask_id,
-    generate_task_id,
-    get_all_template_ids,
-    get_template_by_id,
-    process_template,
-)
-
-# =============================================================================
-# Workspace
-# =============================================================================
-
 from .workspace import (
     WorkspaceDirs,
     compose_body,
@@ -223,154 +146,132 @@ from .workspace import (
     write_board_config,
 )
 
-# =============================================================================
-# Public API
-# =============================================================================
-
 __all__ = [
-    # Version
     "__version__",
-    # Enums
-    "BrainfileType",
-    "RendererType",
-    "Priority",
-    "TemplateType",
-    # Type literals
-    "PriorityLiteral",
-    "TemplateLiteral",
-    "RuleTypeLiteral",
-    # Base models
-    "Rule",
-    "Rules",
     "AgentInstructions",
-    "StatsConfig",
-    "Subtask",
-    # Task models
-    "Task",
-    "TaskDocument",
-    "TaskTemplate",
-    "TemplateVariable",
-    "TemplateConfig",
-    # Board config
+    "BRAINFILE_BASENAME",
+    "BRAINFILE_GLOBS",
+    "BRAINFILE_PATTERNS",
+    "BRAINFILE_STATE_BASENAME",
+    "BUILT_IN_TEMPLATES",
     "BoardConfig",
+    "BoardValidationResult",
+    "BrainfileParser",
+    "BrainfileResolutionKind",
+    "BrainfileType",
+    "BuildLedgerRecordOptions",
     "ColumnConfig",
-    "TypeEntry",
-    "TypesConfig",
-    # Contract models
     "Contract",
-    "ContractStatus",
     "ContractContext",
     "ContractMetrics",
     "ContractPatch",
+    "ContractStatus",
+    "DOT_BRAINFILE_DIRNAME",
+    "DOT_BRAINFILE_GITIGNORE_BASENAME",
     "Deliverable",
-    "ValidationConfig",
-    # Parser
-    "BrainfileParser",
-    "ParseResult",
-    # Inference
-    "infer_type",
-    "infer_renderer",
-    # Templates
-    "BUILT_IN_TEMPLATES",
-    "generate_task_id",
-    "process_template",
-    "get_template_by_id",
-    "get_all_template_ids",
-    # Task file I/O
-    "parse_task_content",
-    "serialize_task_content",
-    "read_task_file",
-    "write_task_file",
-    "read_tasks_dir",
-    "task_file_name",
-    # Task operations
-    "generate_next_file_task_id",
-    "add_task_file",
-    "move_task_file",
-    "complete_task_file",
-    "delete_task_file",
-    "append_log",
-    "list_tasks",
-    "find_task",
-    "search_task_files",
-    "search_logs",
-    "TaskOperationResult",
-    "TaskFileInput",
-    "TaskFilters",
-    # Workspace
-    "WorkspaceDirs",
-    "get_dirs",
-    "is_workspace",
-    "ensure_dirs",
-    "get_task_file_path",
-    "get_log_file_path",
-    "find_workspace_task",
-    "extract_description",
-    "extract_log",
-    "compose_body",
-    "parse_board_config",
-    "read_board_config",
-    "serialize_board_config",
-    "write_board_config",
-    # Board validation
-    "get_board_types",
-    "validate_type",
-    "validate_column",
-    "BoardValidationResult",
-    # Discovery
-    "discover",
-    "find_primary_brainfile",
-    "find_nearest_brainfile",
-    "watch_brainfiles",
-    "is_brainfile_name",
-    "extract_brainfile_suffix",
-    "BRAINFILE_PATTERNS",
-    "BRAINFILE_GLOBS",
-    "EXCLUDE_DIRS",
     "DiscoveredFile",
     "DiscoveryOptions",
     "DiscoveryResult",
-    "WatchError",
-    "WatchResult",
-    # Files
-    "find_brainfile",
-    "resolve_brainfile_path",
-    "get_brainfile_state_dir",
-    "get_brainfile_state_path",
-    "get_dot_brainfile_gitignore_path",
-    "ensure_dot_brainfile_dir",
-    "ensure_dot_brainfile_gitignore",
-    "DOT_BRAINFILE_DIRNAME",
-    "BRAINFILE_BASENAME",
-    "BRAINFILE_STATE_BASENAME",
-    "DOT_BRAINFILE_GITIGNORE_BASENAME",
+    "EXCLUDE_DIRS",
+    "FileHistoryOptions",
     "FoundBrainfile",
-    "BrainfileResolutionKind",
-    "ResolveBrainfilePathOptions",
-    # ID Generation
-    "extract_task_id_number",
-    "generate_subtask_id",
-    "generate_next_subtask_id",
-    "is_valid_task_id",
-    "is_valid_subtask_id",
-    "get_parent_task_id",
-    # Ledger types + operations
-    "LedgerRecordType",
-    "LedgerContractStatus",
     "LEDGER_CONTRACT_STATUSES",
-    "LedgerRecord",
-    "BuildLedgerRecordOptions",
+    "LedgerContractStatus",
     "LedgerDateRange",
     "LedgerQueryFilters",
-    "FileHistoryOptions",
-    "TaskContextOptions",
+    "LedgerRecord",
+    "LedgerRecordType",
+    "ParseResult",
+    "Priority",
+    "PriorityLiteral",
+    "RendererType",
+    "ResolveBrainfilePathOptions",
+    "Rule",
+    "RuleTypeLiteral",
+    "Rules",
+    "StatsConfig",
+    "Subtask",
+    "Task",
     "TaskContextEntry",
-    "build_ledger_record",
+    "TaskContextOptions",
+    "TaskDocument",
+    "TaskFileInput",
+    "TaskFilters",
+    "TaskOperationResult",
+    "TaskTemplate",
+    "TemplateConfig",
+    "TemplateLiteral",
+    "TemplateType",
+    "TemplateVariable",
+    "TypeEntry",
+    "TypesConfig",
+    "ValidationConfig",
+    "WatchError",
+    "WatchResult",
+    "WorkspaceDirs",
+    "add_task_file",
     "append_ledger_record",
-    "read_ledger",
-    "query_ledger",
+    "append_log",
+    "build_ledger_record",
+    "compose_body",
+    "complete_task_file",
+    "delete_task_file",
+    "discover",
+    "ensure_dirs",
+    "ensure_dot_brainfile_dir",
+    "ensure_dot_brainfile_gitignore",
+    "extract_brainfile_suffix",
+    "extract_description",
+    "extract_log",
+    "extract_task_id_number",
+    "find_brainfile",
+    "find_nearest_brainfile",
+    "find_primary_brainfile",
+    "find_task",
+    "find_workspace_task",
+    "generate_next_file_task_id",
+    "generate_next_subtask_id",
+    "generate_subtask_id",
+    "generate_task_id",
+    "get_all_template_ids",
+    "get_board_types",
+    "get_brainfile_state_dir",
+    "get_brainfile_state_path",
+    "get_dirs",
+    "get_dot_brainfile_gitignore_path",
     "get_file_history",
+    "get_log_file_path",
+    "get_parent_task_id",
     "get_task_context",
-    "normalize_path_value",
+    "get_task_file_path",
+    "get_template_by_id",
+    "infer_renderer",
+    "infer_type",
+    "is_brainfile_name",
     "is_ledger_contract_status",
+    "is_valid_subtask_id",
+    "is_valid_task_id",
+    "is_workspace",
+    "list_tasks",
+    "move_task_file",
+    "normalize_path_value",
+    "parse_board_config",
+    "parse_task_content",
+    "process_template",
+    "query_ledger",
+    "read_board_config",
+    "read_ledger",
+    "read_task_file",
+    "read_tasks_dir",
+    "resolve_brainfile_path",
+    "search_logs",
+    "search_task_files",
+    "serialize_board_config",
+    "serialize_task_content",
+    "task_file_name",
+    "validate_column",
+    "validate_type",
+    "watch_brainfiles",
+    "write_board_config",
+    "write_task_file",
 ]

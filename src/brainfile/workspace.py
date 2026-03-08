@@ -18,12 +18,16 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-
 from io import StringIO
 
+from ._yaml import create_yaml
+from .frontmatter import (
+    extract_frontmatter_sections,
+    has_frontmatter_start,
+    trim_leading_blank_line,
+)
 from .models import BoardConfig
 from .parser import BrainfileParser
-from ._yaml import create_yaml
 from .task_file import read_task_file, read_tasks_dir, task_file_name
 
 
@@ -66,6 +70,24 @@ def get_log_file_path(logs_dir: str, task_id: str) -> str:
     return os.path.join(logs_dir, task_file_name(task_id))
 
 
+def _match_task_document(file_path: str, task_id: str, is_log: bool) -> dict | None:
+    task_doc = read_task_file(file_path)
+    if task_doc and task_doc.task.id == task_id:
+        return {"doc": task_doc, "file_path": file_path, "is_log": is_log}
+    return None
+
+
+def _scan_task_documents(dir_path: str, task_id: str, is_log: bool, fallback_path: str) -> dict | None:
+    for doc in read_tasks_dir(dir_path):
+        if doc.task.id == task_id:
+            return {
+                "doc": doc,
+                "file_path": doc.file_path or fallback_path,
+                "is_log": is_log,
+            }
+    return None
+
+
 def find_task(
     dirs: WorkspaceDirs,
     task_id: str,
@@ -76,40 +98,26 @@ def find_task(
     Returns a dict: {doc, file_path, is_log} or None.
     """
 
-    # Fast path: board convention
     task_path = get_task_file_path(dirs.board_dir, task_id)
-    task_doc = read_task_file(task_path)
-    if task_doc and task_doc.task.id == task_id:
-        return {"doc": task_doc, "file_path": task_path, "is_log": False}
+    found = _match_task_document(task_path, task_id, False)
+    if found is not None:
+        return found
 
-    # Fast path: log convention
     if search_logs:
         log_path = get_log_file_path(dirs.logs_dir, task_id)
-        log_doc = read_task_file(log_path)
-        if log_doc and log_doc.task.id == task_id:
-            return {"doc": log_doc, "file_path": log_path, "is_log": True}
+        found = _match_task_document(log_path, task_id, True)
+        if found is not None:
+            return found
 
-    # Slow path: scan dirs
-    board_docs = read_tasks_dir(dirs.board_dir)
-    for doc in board_docs:
-        if doc.task.id == task_id:
-            return {
-                "doc": doc,
-                "file_path": doc.file_path or task_path,
-                "is_log": False,
-            }
+    found = _scan_task_documents(dirs.board_dir, task_id, False, task_path)
+    if found is not None:
+        return found
 
-    if search_logs:
-        log_docs = read_tasks_dir(dirs.logs_dir)
-        for doc in log_docs:
-            if doc.task.id == task_id:
-                return {
-                    "doc": doc,
-                    "file_path": doc.file_path or get_log_file_path(dirs.logs_dir, task_id),
-                    "is_log": True,
-                }
+    if not search_logs:
+        return None
 
-    return None
+    log_path = get_log_file_path(dirs.logs_dir, task_id)
+    return _scan_task_documents(dirs.logs_dir, task_id, True, log_path)
 
 
 _DESCRIPTION_RE = re.compile(r"## Description\n([\s\S]*?)(?=\n## |\n*$)")
@@ -158,34 +166,7 @@ def read_board_config(brainfile_path: str) -> BoardConfig:
     return BoardConfig.model_validate(data)
 
 
-def parse_board_config(content: str) -> tuple[BoardConfig, str]:
-    """Parse raw board config file content into a (BoardConfig, body) tuple.
-
-    The content must be a markdown string with YAML frontmatter delimited by ``---``.
-    Returns the parsed config and the body text after the frontmatter.
-
-    Raises :class:`ValueError` for invalid inputs.
-    """
-
-    lines = content.split("\n")
-
-    # Must start with frontmatter delimiter
-    if not lines or lines[0].strip() != "---":
-        raise ValueError("Content does not start with YAML frontmatter delimiter")
-
-    # Find closing delimiter
-    end_index = -1
-    for i in range(1, len(lines)):
-        if lines[i].strip() == "---":
-            end_index = i
-            break
-
-    if end_index == -1:
-        raise ValueError("Missing closing YAML frontmatter delimiter")
-
-    yaml_content = "\n".join(lines[1:end_index])
-    body_content = "\n".join(lines[end_index + 1 :])
-
+def _load_board_config_mapping(yaml_content: str) -> dict:
     yaml = create_yaml()
     try:
         parsed = yaml.load(StringIO(yaml_content))
@@ -195,12 +176,28 @@ def parse_board_config(content: str) -> tuple[BoardConfig, str]:
     if not parsed or not isinstance(parsed, dict):
         raise ValueError("YAML frontmatter is empty or not a mapping")
 
+    return parsed
+
+
+def parse_board_config(content: str) -> tuple[BoardConfig, str]:
+    """Parse raw board config file content into a (BoardConfig, body) tuple.
+
+    The content must be a markdown string with YAML frontmatter delimited by ``---``.
+    Returns the parsed config and the body text after the frontmatter.
+
+    Raises :class:`ValueError` for invalid inputs.
+    """
+
+    sections = extract_frontmatter_sections(content)
+    if sections is None:
+        if has_frontmatter_start(content):
+            raise ValueError("Missing closing YAML frontmatter delimiter")
+        raise ValueError("Content does not start with YAML frontmatter delimiter")
+
+    yaml_content, body_content = sections
+    parsed = _load_board_config_mapping(yaml_content)
     config = BoardConfig.model_validate(parsed)
-
-    # Trim a single leading blank line after frontmatter (convention)
-    body = body_content[1:] if body_content.startswith("\n") else body_content
-
-    return config, body
+    return config, trim_leading_blank_line(body_content)
 
 
 def serialize_board_config(config: BoardConfig, body: str = "") -> str:

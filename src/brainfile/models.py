@@ -12,11 +12,11 @@ These are plain dataclasses (no Pydantic dependency). Each model supports:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields, asdict
+from dataclasses import dataclass, field, fields
 from enum import Enum
 from typing import Any, Literal
 
-from ._keys import keys_to_camel, keys_to_snake, snake_to_camel, camel_to_snake
+from ._keys import camel_to_snake, keys_to_camel
 
 
 # =============================================================================
@@ -158,74 +158,41 @@ def _resolve_fields(cls: type, data: dict[str, Any]) -> tuple[dict[str, Any], di
     return kwargs, extras
 
 
-def _coerce_field(cls: type, field_name: str, value: Any) -> Any:
-    """Coerce a value to the expected type for a field."""
-    # Nested model coercion
-    _NESTED_MODELS: dict[str, dict[str, type]] = {
-        "Task": {
-            "subtasks": Subtask,
-            "contract": Contract,
-        },
-        "Contract": {
-            "deliverables": Deliverable,
-            "validation": ValidationConfig,
-            "context": ContractContext,
-            "metrics": ContractMetrics,
-        },
-        "ContractPatch": {
-            "deliverables": Deliverable,
-            "validation": ValidationConfig,
-            "context": ContractContext,
-            "metrics": ContractMetrics,
-        },
-        "BoardConfig": {
-            "columns": ColumnConfig,
-            "agent": AgentInstructions,
-            "rules": Rules,
-        },
-        "Rules": {
-            "always": Rule,
-            "never": Rule,
-            "prefer": Rule,
-            "context": Rule,
-        },
-        "TaskDocument": {
-            "task": Task,
-        },
-        "TaskTemplate": {
-            "template": Task,
-            "variables": TemplateVariable,
-        },
-        "TemplateConfig": {
-            "built_in_templates": TaskTemplate,
-            "user_templates": TaskTemplate,
-        },
-        "TaskContextEntry": {
-            "record": None,  # handled via LedgerRecord in types_ledger
-        },
+def _coerce_nested_model_value(target_cls_name: str | None, value: Any) -> Any:
+    if target_cls_name is None:
+        return value
+
+    target_cls = globals()[target_cls_name]
+    if isinstance(value, list):
+        return [
+            target_cls.model_validate(item) if isinstance(item, dict) else item
+            for item in value
+        ]
+    if isinstance(value, dict):
+        return target_cls.model_validate(value)
+    return value
+
+
+def _coerce_types_config(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    return {
+        k: TypeEntry.model_validate(v) if isinstance(v, dict) else v
+        for k, v in value.items()
     }
 
+
+def _coerce_field(cls: type, field_name: str, value: Any) -> Any:
+    """Coerce a value to the expected type for a field."""
     cls_name = cls.__name__
-    model_map = _NESTED_MODELS.get(cls_name, {})
+    model_map = NESTED_MODELS.get(cls_name, {})
+    nested_model = model_map.get(field_name)
 
     if field_name in model_map:
-        target_cls = model_map[field_name]
-        if target_cls is None:
-            return value
-        if isinstance(value, list):
-            return [
-                target_cls.model_validate(item) if isinstance(item, dict) else item
-                for item in value
-            ]
-        if isinstance(value, dict):
-            return target_cls.model_validate(value)
+        return _coerce_nested_model_value(nested_model, value)
 
-    # Special handling for 'types' field in BoardConfig (dict of TypeEntry)
-    if cls_name == "BoardConfig" and field_name == "types" and isinstance(value, dict):
-        return {
-            k: TypeEntry.model_validate(v) if isinstance(v, dict) else v
-            for k, v in value.items()
-        }
+    if cls_name == "BoardConfig" and field_name == "types":
+        return _coerce_types_config(value)
 
     return value
 
@@ -521,6 +488,51 @@ class BoardConfig(_ModelMixin):
     agent: AgentInstructions | None = None
     rules: Rules | None = None
     metadata: dict | None = None
+
+
+NESTED_MODELS: dict[str, dict[str, str | None]] = {
+    "Task": {
+        "subtasks": "Subtask",
+        "contract": "Contract",
+    },
+    "Contract": {
+        "deliverables": "Deliverable",
+        "validation": "ValidationConfig",
+        "context": "ContractContext",
+        "metrics": "ContractMetrics",
+    },
+    "ContractPatch": {
+        "deliverables": "Deliverable",
+        "validation": "ValidationConfig",
+        "context": "ContractContext",
+        "metrics": "ContractMetrics",
+    },
+    "BoardConfig": {
+        "columns": "ColumnConfig",
+        "agent": "AgentInstructions",
+        "rules": "Rules",
+    },
+    "Rules": {
+        "always": "Rule",
+        "never": "Rule",
+        "prefer": "Rule",
+        "context": "Rule",
+    },
+    "TaskDocument": {
+        "task": "Task",
+    },
+    "TaskTemplate": {
+        "template": "Task",
+        "variables": "TemplateVariable",
+    },
+    "TemplateConfig": {
+        "built_in_templates": "TaskTemplate",
+        "user_templates": "TaskTemplate",
+    },
+    "TaskContextEntry": {
+        "record": None,  # handled via LedgerRecord in types_ledger
+    },
+}
 
 
 # =============================================================================

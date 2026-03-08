@@ -1,89 +1,131 @@
-"""
-Parser for Brainfile markdown files with YAML frontmatter.
-
-This module provides parsing functionality for brainfile.md files,
-extracting YAML frontmatter and converting it to typed data structures.
-"""
-
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
-from io import StringIO
 from typing import Any
 
+from .frontmatter import load_frontmatter_mapping
 from .inference import SchemaHints, infer_renderer, infer_type
-from .models import BrainfileType, RendererType
-from ._yaml import create_yaml
+from .models import RendererType
+
+__all__ = ["ParseResult", "BrainfileParser"]
 
 
 @dataclass
 class ParseResult:
-    """Result of parsing a brainfile."""
-
     data: dict[str, Any] | None = None
-    """Parsed frontmatter data"""
-
     type: str | None = None
-    """Detected brainfile type"""
-
     renderer: RendererType | None = None
-    """Inferred renderer type"""
-
     error: str | None = None
-    """Error message if parsing failed"""
-
     warnings: list[str] | None = None
-    """Warning messages from parser"""
 
 
-def _consolidate_duplicate_columns(
-    columns: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[str]]:
-    """Consolidate duplicate columns by merging their tasks."""
+def _consolidate_duplicate_columns(columns: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
     warnings: list[str] = []
-    column_map: dict[str, dict[str, Any]] = {}
+    seen: dict[str, dict[str, Any]] = {}
 
     for column in columns:
         column_id = column.get("id", "")
-        existing = column_map.get(column_id)
+        tasks = column.get("tasks") if isinstance(column.get("tasks"), list) else []
 
-        if existing:
-            task_count = len(column.get("tasks", []))
-            warnings.append(
-                f'Duplicate column detected: "{column_id}" '
-                f'(title: "{column.get("title", "")}"). '
-                f"Merging {task_count} task(s) into existing column."
-            )
-            existing_tasks = existing.get("tasks", [])
-            new_tasks = column.get("tasks", [])
-            existing["tasks"] = existing_tasks + new_tasks
-        else:
-            column_map[column_id] = column
+        if column_id not in seen:
+            seen[column_id] = column
+            continue
 
-    return list(column_map.values()), warnings
+        warnings.append(
+            f'Duplicate column detected: "{column_id}" '
+            f'(title: "{column.get("title", "")}"). '
+            f"Merging {len(tasks)} task(s) into existing column."
+        )
+        existing = seen[column_id].get("tasks") if isinstance(seen[column_id].get("tasks"), list) else []
+        seen[column_id]["tasks"] = [*existing, *tasks]
+
+    return list(seen.values()), warnings
+
+
+def _format_duplicate_column_warnings(warnings: list[str]) -> list[str]:
+    if not warnings:
+        return []
+    return ["[Brainfile Parser] Duplicate columns detected:", *[f"  - {warning}" for warning in warnings]]
+
+
+def _find_list_item_location(lines: list[str], index: int) -> tuple[int, int]:
+    line = lines[index]
+    previous_is_dash = index > 0 and re.match(r"^\s*-\s*$", lines[index - 1])
+    if re.match(r"^\s*-\s+id:\s+", line) or not previous_is_dash:
+        return index + 1, 0
+    return index, 0
+
+
+def _load_and_normalize_board_data(content: str, warnings: list[str]) -> dict[str, Any] | None:
+    try:
+        data = load_frontmatter_mapping(content)
+    except Exception:
+        return None
+
+    if data is None:
+        return None
+
+    columns = data.get("columns")
+    if isinstance(columns, list):
+        merged_columns, duplicate_warnings = _consolidate_duplicate_columns(columns)
+        warnings.extend(_format_duplicate_column_warnings(duplicate_warnings))
+        data["columns"] = merged_columns
+
+    return data
+
+
+def _find_frontmatter_end(lines: list[str]) -> int | None:
+    in_frontmatter = False
+    for index, line in enumerate(lines):
+        if line.strip() != "---":
+            continue
+        if not in_frontmatter:
+            in_frontmatter = True
+            continue
+        return index
+    return None
+
+
+def _find_rules_section(lines: list[str], rule_type: str, end_index: int) -> tuple[int, int] | None:
+    in_rules = False
+    in_rule_section = False
+
+    for index in range(end_index):
+        line = lines[index]
+        stripped = line.strip()
+
+        if stripped == "rules:":
+            in_rules = True
+            continue
+
+        if in_rules and stripped == f"{rule_type}:":
+            in_rule_section = True
+            continue
+
+        if in_rules and re.match(r"^[a-z]+:", line) and not re.match(r"^\s", line):
+            in_rules = False
+            in_rule_section = False
+            continue
+
+        if not in_rule_section:
+            continue
+
+        if re.match(r"^\s{2}[a-z]+:", line) and f"{rule_type}:" not in line:
+            in_rule_section = False
+            continue
+
+        yield index, line
 
 
 class BrainfileParser:
-    """Parser for Brainfile markdown files with YAML frontmatter."""
-
     @staticmethod
     def parse(content: str) -> dict[str, Any] | None:
-        """
-        Parse a brainfile.md file content.
-
-        Args:
-            content: The markdown content with YAML frontmatter
-
-        Returns:
-            Parsed data as dict or None if parsing fails
-        """
         warnings: list[str] = []
-        data = BrainfileParser._parse_with_warning_capture(content, warnings)
-        if warnings:
-            import sys
-            for warning in warnings:
-                print(warning, file=sys.stderr)
+        data = _load_and_normalize_board_data(content, warnings)
+        for warning in warnings:
+            print(warning, file=sys.stderr)
         return data
 
     @staticmethod
@@ -92,146 +134,43 @@ class BrainfileParser:
         filename: str | None = None,
         schema_hints: SchemaHints | None = None,
     ) -> ParseResult:
-        """Parse with detailed error reporting, warnings, and type detection."""
         warnings: list[str] = []
-        captured_warnings: list[str] = []
-
         try:
-            data = BrainfileParser._parse_with_warning_capture(content, captured_warnings)
-            warnings.extend(captured_warnings)
-
+            data = _load_and_normalize_board_data(content, warnings)
             if data is None:
                 return ParseResult(
-                    data=None,
-                    error="Failed to parse YAML frontmatter",
-                    warnings=warnings if warnings else None,
+                    None,
+                    None,
+                    None,
+                    "Failed to parse YAML frontmatter",
+                    warnings or None,
                 )
 
             detected_type = infer_type(data, filename)
             renderer = infer_renderer(detected_type, data, schema_hints)
-
-            return ParseResult(
-                data=data,
-                type=detected_type,
-                renderer=renderer,
-                warnings=warnings if warnings else None,
-            )
-
-        except Exception as e:
-            return ParseResult(
-                data=None,
-                error=str(e),
-                warnings=warnings if warnings else None,
-            )
+            return ParseResult(data, detected_type, renderer, None, warnings or None)
+        except Exception as exc:
+            return ParseResult(error=str(exc), warnings=warnings or None)
 
     @staticmethod
-    def _parse_with_warning_capture(
-        content: str,
-        warnings: list[str],
-    ) -> dict[str, Any] | None:
-        """Parse content and capture duplicate column warnings."""
-        try:
-            lines = content.split("\n")
-
-            if not lines[0].strip().startswith("---"):
-                return None
-
-            end_index = -1
-            for i in range(1, len(lines)):
-                if lines[i].strip() == "---":
-                    end_index = i
-                    break
-
-            if end_index == -1:
-                return None
-
-            yaml_content = "\n".join(lines[1:end_index])
-            yaml = create_yaml()
-            data = yaml.load(StringIO(yaml_content))
-
-            if data is None:
-                return None
-
-            data = dict(data) if hasattr(data, "items") else data
-
-            if data and isinstance(data.get("columns"), list):
-                columns, column_warnings = _consolidate_duplicate_columns(data["columns"])
-                if column_warnings:
-                    warnings.append("[Brainfile Parser] Duplicate columns detected:")
-                    for warning in column_warnings:
-                        warnings.append(f"  - {warning}")
-                data["columns"] = columns
-
-            return data
-
-        except Exception:
-            return None
-
-    @staticmethod
-    def find_task_location(
-        content: str,
-        task_id: str,
-    ) -> tuple[int, int] | None:
-        """Find the line number of a task in the file."""
+    def find_task_location(content: str, task_id: str) -> tuple[int, int] | None:
         lines = content.split("\n")
-
-        for i, line in enumerate(lines):
-            if f"id: {task_id}" in line:
-                if re.match(r"^\s*-\s+id:\s+", line):
-                    return (i + 1, 0)
-                if i > 0 and re.match(r"^\s*-\s*$", lines[i - 1]):
-                    return (i, 0)
-                return (i + 1, 0)
-
+        needle = f"id: {task_id}"
+        for index, line in enumerate(lines):
+            if needle in line:
+                return _find_list_item_location(lines, index)
         return None
 
     @staticmethod
-    def find_rule_location(
-        content: str,
-        rule_id: int,
-        rule_type: str,
-    ) -> tuple[int, int] | None:
-        """Find the line number of a rule in the YAML frontmatter."""
+    def find_rule_location(content: str, rule_id: int, rule_type: str) -> tuple[int, int] | None:
         lines = content.split("\n")
-        in_frontmatter = False
-        in_rules_section = False
-        in_rule_type_section = False
+        end_index = _find_frontmatter_end(lines)
+        if end_index is None:
+            return None
 
-        for i, line in enumerate(lines):
-            trimmed_line = line.strip()
-
-            if trimmed_line == "---":
-                if not in_frontmatter:
-                    in_frontmatter = True
-                    continue
-                else:
-                    break
-
-            if not in_frontmatter:
-                continue
-
-            if trimmed_line == "rules:":
-                in_rules_section = True
-                continue
-
-            if in_rules_section and trimmed_line == f"{rule_type}:":
-                in_rule_type_section = True
-                continue
-
-            if in_rules_section and re.match(r"^[a-z]+:", line) and not re.match(r"^\s", line):
-                in_rules_section = False
-                in_rule_type_section = False
-
-            if in_rule_type_section:
-                if re.match(r"^\s{2}[a-z]+:", line) and f"{rule_type}:" not in line:
-                    in_rule_type_section = False
-                    continue
-
-                if f"id: {rule_id}" in line:
-                    if re.match(r"^\s*-\s+id:\s+", line):
-                        return (i + 1, 0)
-                    if i > 0 and re.match(r"^\s*-\s*$", lines[i - 1]):
-                        return (i, 0)
-                    return (i + 1, 0)
+        needle = f"id: {rule_id}"
+        for index, line in _find_rules_section(lines, rule_type, end_index):
+            if needle in line:
+                return _find_list_item_location(lines, index)
 
         return None

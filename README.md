@@ -139,12 +139,134 @@ if is_workspace(".brainfile/brainfile.md"):
 | [@brainfile/cli](https://github.com/brainfile/cli) | CLI with TUI and MCP server |
 | [Protocol](https://github.com/brainfile/protocol) | Specification and JSON Schema |
 
+## Workspace Helpers
+
+For multi-agent systems, the workspace helpers provide workspace detection, path resolution, task discovery, task body composition, and board-config parsing.
+
+### Workspace setup and path helpers
+
+Use `get_dirs()` to resolve absolute workspace paths from `.brainfile/brainfile.md`. Use `ensure_dirs()` to create the `board/` and `logs/` directories when bootstrapping a workspace.
+
+```python
+from brainfile import ensure_dirs, get_dirs, get_log_file_path, get_task_file_path, is_workspace
+
+brainfile_path = ".brainfile/brainfile.md"
+
+# Resolve canonical absolute paths
+resolved = get_dirs(brainfile_path)
+print(resolved.dot_dir)
+print(resolved.board_dir)
+print(resolved.logs_dir)
+print(resolved.brainfile_path)
+
+# Create board/ and logs/ if needed
+workspace = ensure_dirs(brainfile_path)
+
+# Build canonical task filenames
+active_task_path = get_task_file_path(workspace.board_dir, "task-1")
+archived_task_path = get_log_file_path(workspace.logs_dir, "task-1")
+
+# Detect whether board/ exists yet
+print(is_workspace(brainfile_path))
+```
+
+`is_workspace()` currently checks whether the `board/` directory exists for the resolved workspace path. `ensure_dirs()` creates `board/` and `logs/`, but it does not create or validate `.brainfile/brainfile.md` itself.
+
+### Task discovery
+
+Find tasks in the active board and, optionally, archived logs:
+
+```python
+from brainfile import find_workspace_task, get_dirs
+
+dirs = get_dirs(".brainfile/brainfile.md")
+
+result = find_workspace_task(dirs, "task-1", search_logs=True)
+if result:
+    doc = result["doc"]
+    print(doc.task.title)
+    print(result["file_path"])
+    print("archived" if result["is_log"] else "active")
+```
+
+The finder checks the canonical `task-N.md` path first, then falls back to scanning markdown files in the directory so renamed task files can still be found by task id. When `search_logs=False`, only the active board is searched.
+
+### Body helpers
+
+Extract or rebuild the standard `Description` and `Log` sections used in task bodies:
+
+```python
+from brainfile import compose_body, extract_description, extract_log
+
+body = compose_body(
+    description="Implement JWT auth",
+    log="- 2026-01-01 started\n- 2026-01-02 in review",
+)
+
+print(extract_description(body))
+print(extract_log(body))
+```
+
+`extract_description()` and `extract_log()` return `None` when the section is missing or empty. `compose_body()` trims each provided section, omits empty sections, and returns an empty string if both values are absent.
+
+### Board config helpers
+
+Parse and serialize `.brainfile/brainfile.md` while preserving markdown body content below the YAML frontmatter:
+
+```python
+from brainfile import parse_board_config, read_board_config, serialize_board_config, write_board_config
+
+content = """---
+title: My Board
+columns:
+- id: todo
+  title: To Do
+---
+
+## Notes
+Team guidelines here.
+"""
+
+config, body = parse_board_config(content)
+serialized = serialize_board_config(config, body)
+loaded = read_board_config(".brainfile/brainfile.md")
+write_board_config(".brainfile/brainfile.md", config, body)
+```
+
+`parse_board_config()` requires YAML frontmatter delimited by `---` lines and returns a `(BoardConfig, body)` tuple. `serialize_board_config()` emits YAML frontmatter and preserves an optional markdown body. `read_board_config()` returns only the parsed `BoardConfig`, while `write_board_config()` writes both config and body back to disk.
+
 ## Development
 
 ```bash
 git clone https://github.com/brainfile/py.git
 cd py
 uv sync --dev
+uv run pytest
+```
+
+### Coverage expectations
+
+Pytest is configured in `pyproject.toml` to collect coverage for the `brainfile` package and fail the full suite below **80%** total coverage.
+
+A focused workspace regression suite lives in `tests/test_workspace.py`. It exercises the current workspace helper surface, including:
+
+- `get_dirs()`, `ensure_dirs()`, and `is_workspace()`
+- `get_task_file_path()` and `get_log_file_path()`
+- `find_workspace_task()` across board files, log files, missing tasks, and renamed task files
+- `extract_description()`, `extract_log()`, and `compose_body()`
+- `parse_board_config()`, `serialize_board_config()`, `read_board_config()`, and `write_board_config()`
+
+Run the workspace-focused tests with the legacy alias used by the contract:
+
+```bash
+uv run pytest tests/test_workspace.py -q
+```
+
+Because the repository-wide coverage floor applies to that command too, this focused run still enforces the global **80%** total coverage threshold rather than a per-file threshold for `workspace.py` alone.
+
+Run the full suite with the repository coverage settings:
+
+```bash
 uv run pytest
 ```
 
