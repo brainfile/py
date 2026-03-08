@@ -11,10 +11,42 @@ the official brainfile apps only support the board type.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .models import BrainfileType, RendererType
 from .schema_hints import SchemaHints
+
+_SCHEMA_TYPE_RE = re.compile(r"/v1/(\w+)\.json$")
+_FILENAME_TYPE_RE = re.compile(r"brainfile\.(\w+)\.md$")
+
+
+def _type_from_explicit_field(data: Any) -> str | None:
+    if not isinstance(data, dict):
+        return None
+
+    type_value = data.get("type")
+    return type_value if isinstance(type_value, str) and type_value else None
+
+
+def _type_from_schema(data: Any) -> str | None:
+    if not isinstance(data, dict):
+        return None
+
+    schema = data.get("schema")
+    if not isinstance(schema, str) or not schema:
+        return None
+
+    match = _SCHEMA_TYPE_RE.search(schema)
+    return match.group(1) if match else None
+
+
+def _type_from_filename(filename: str | None) -> str | None:
+    if not filename:
+        return None
+
+    match = _FILENAME_TYPE_RE.search(filename)
+    return match.group(1) if match else None
 
 
 def infer_type(data: Any, filename: str | None = None) -> str:
@@ -35,35 +67,24 @@ def infer_type(data: Any, filename: str | None = None) -> str:
     Returns:
         The inferred brainfile type
     """
-    # 1. Explicit type field
-    if isinstance(data, dict) and data.get("type") and isinstance(data["type"], str):
-        return data["type"]
+    return (
+        _type_from_explicit_field(data)
+        or _type_from_schema(data)
+        or _type_from_filename(filename)
+        or _detect_type_from_structure(data)
+        or BrainfileType.BOARD.value
+    )
 
-    # 2. Schema URL pattern
-    if isinstance(data, dict):
-        schema = data.get("schema")
-        if schema and isinstance(schema, str):
-            import re
 
-            match = re.search(r"/v1/(\w+)\.json$", schema)
-            if match:
-                return match.group(1)
+def _check_list_field(data: dict[str, Any], field_name: str, brainfile_type: BrainfileType) -> str | None:
+    return brainfile_type.value if isinstance(data.get(field_name), list) else None
 
-    # 3. File name suffix (brainfile.TYPE.md)
-    if filename:
-        import re
 
-        match = re.search(r"brainfile\.(\w+)\.md$", filename)
-        if match:
-            return match.group(1)
-
-    # 4. Structure analysis
-    detected_type = _detect_type_from_structure(data)
-    if detected_type:
-        return detected_type
-
-    # 5. Default
-    return BrainfileType.BOARD.value
+def _is_checklist_items(items: Any) -> bool:
+    return isinstance(items, list) and len(items) > 0 and all(
+        isinstance(item, dict) and isinstance(item.get("completed"), bool)
+        for item in items
+    )
 
 
 def _detect_type_from_structure(data: Any) -> str | None:
@@ -81,33 +102,25 @@ def _detect_type_from_structure(data: Any) -> str | None:
     if not isinstance(data, dict):
         return None
 
-    # Check for journal structure (entries array)
-    if isinstance(data.get("entries"), list):
-        return BrainfileType.JOURNAL.value
+    return (
+        _check_list_field(data, "entries", BrainfileType.JOURNAL)
+        or _check_list_field(data, "columns", BrainfileType.BOARD)
+        or _check_list_field(data, "categories", BrainfileType.COLLECTION)
+        or (BrainfileType.CHECKLIST.value if _is_checklist_items(data.get("items")) else None)
+        or _check_list_field(data, "sections", BrainfileType.DOCUMENT)
+    )
 
-    # Check for board structure (columns array)
-    if isinstance(data.get("columns"), list):
-        return BrainfileType.BOARD.value
 
-    # Check for collection structure (categories array)
-    if isinstance(data.get("categories"), list):
-        return BrainfileType.COLLECTION.value
+def _renderer_from_schema_hints(
+    schema_hints: SchemaHints | None,
+) -> RendererType | None:
+    if not schema_hints or not schema_hints.renderer:
+        return None
 
-    # Check for checklist structure (flat items array with completed)
-    items = data.get("items")
-    if isinstance(items, list) and len(items) > 0:
-        has_completed = all(
-            isinstance(item, dict) and isinstance(item.get("completed"), bool)
-            for item in items
-        )
-        if has_completed:
-            return BrainfileType.CHECKLIST.value
-
-    # Check for document structure (sections array)
-    if isinstance(data.get("sections"), list):
-        return BrainfileType.DOCUMENT.value
-
-    return None
+    try:
+        return RendererType(schema_hints.renderer)
+    except ValueError:
+        return None
 
 
 def infer_renderer(
@@ -134,20 +147,16 @@ def infer_renderer(
     Returns:
         The inferred renderer type
     """
-    # 1. Schema hint (explicit override)
-    if schema_hints and schema_hints.renderer:
-        try:
-            return RendererType(schema_hints.renderer)
-        except ValueError:
-            pass  # Invalid renderer hint, continue to structural detection
+    del type_
 
-    # 2. Structural pattern matching (universal code path)
-    renderer_from_structure = _detect_renderer_from_structure(data)
-    if renderer_from_structure:
-        return renderer_from_structure
+    return _renderer_from_schema_hints(schema_hints) or _detect_renderer_from_structure(data) or RendererType.TREE
 
-    # 3. Fallback
-    return RendererType.TREE
+
+def _has_timeline_entries(entries: Any) -> bool:
+    return isinstance(entries, list) and len(entries) > 0 and any(
+        isinstance(entry, dict) and (entry.get("createdAt") or entry.get("timestamp"))
+        for entry in entries
+    )
 
 
 def _detect_renderer_from_structure(data: Any) -> RendererType | None:
@@ -163,37 +172,14 @@ def _detect_renderer_from_structure(data: Any) -> RendererType | None:
     if not isinstance(data, dict):
         return None
 
-    # Columns with nested items -> kanban
     if isinstance(data.get("columns"), list):
         return RendererType.KANBAN
-
-    # Entries with timestamps -> timeline
-    entries = data.get("entries")
-    if isinstance(entries, list) and len(entries) > 0:
-        has_timestamps = any(
-            isinstance(entry, dict)
-            and (entry.get("createdAt") or entry.get("timestamp"))
-            for entry in entries
-        )
-        if has_timestamps:
-            return RendererType.TIMELINE
-
-    # Items with completed boolean -> checklist
-    items = data.get("items")
-    if isinstance(items, list) and len(items) > 0:
-        has_completed = all(
-            isinstance(item, dict) and isinstance(item.get("completed"), bool)
-            for item in items
-        )
-        if has_completed:
-            return RendererType.CHECKLIST
-
-    # Categories with nested items -> grouped-list
+    if _has_timeline_entries(data.get("entries")):
+        return RendererType.TIMELINE
+    if _is_checklist_items(data.get("items")):
+        return RendererType.CHECKLIST
     if isinstance(data.get("categories"), list):
         return RendererType.GROUPED_LIST
-
-    # Sections array -> document
     if isinstance(data.get("sections"), list):
         return RendererType.DOCUMENT
-
     return None

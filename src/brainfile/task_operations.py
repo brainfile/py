@@ -114,26 +114,18 @@ def _resolve_child_tasks(
 ) -> list[ChildTaskSummary]:
     docs = read_tasks_dir(board_dir) + read_tasks_dir(logs_dir)
 
-    # Prefer first-class parentId links when present.
     linked = [doc for doc in docs if doc.task.parent_id == epic_id]
     if linked:
         return [{"id": doc.task.id, "title": doc.task.title} for doc in linked]
-
     if not child_ids:
         return []
 
-    title_by_id: dict[str, str] = {}
-    for doc in docs:
-        if doc.task.id not in title_by_id:
-            title_by_id[doc.task.id] = doc.task.title
-
-    child_tasks: list[ChildTaskSummary] = []
-    for child_id in child_ids:
-        title = title_by_id.get(child_id)
-        if title:
-            child_tasks.append({"id": child_id, "title": title})
-
-    return child_tasks
+    title_by_id = {doc.task.id: doc.task.title for doc in docs}
+    return [
+        {"id": child_id, "title": title_by_id[child_id]}
+        for child_id in child_ids
+        if child_id in title_by_id
+    ]
 
 
 def _build_child_tasks_section(child_tasks: list[ChildTaskSummary]) -> str:
@@ -171,6 +163,17 @@ def _rollback_ledger_append(logs_dir: str, record: LedgerRecord) -> None:
         pass
 
 
+def _epic_completion_body(task_path: str, logs_dir: str, doc: TaskDocument) -> str:
+    if doc.task.type != "epic":
+        return doc.body
+
+    board_dir = os.path.dirname(task_path)
+    child_ids = _extract_epic_child_task_ids(doc.task)
+    child_tasks = _resolve_child_tasks(doc.task.id, child_ids, board_dir, logs_dir)
+    child_tasks_section = _build_child_tasks_section(child_tasks)
+    return _append_body_section(doc.body, child_tasks_section)
+
+
 def _complete_task_file_legacy(
     task_path: str,
     logs_dir: str,
@@ -178,14 +181,7 @@ def _complete_task_file_legacy(
     completed_task: Task,
 ) -> TaskOperationResult:
     dest_path = os.path.join(logs_dir, os.path.basename(task_path))
-    completed_body = doc.body
-
-    if doc.task.type == "epic":
-        board_dir = os.path.dirname(task_path)
-        child_ids = _extract_epic_child_task_ids(doc.task)
-        child_tasks = _resolve_child_tasks(doc.task.id, child_ids, board_dir, logs_dir)
-        child_tasks_section = _build_child_tasks_section(child_tasks)
-        completed_body = _append_body_section(doc.body, child_tasks_section)
+    completed_body = _epic_completion_body(task_path, logs_dir, doc)
 
     try:
         _write_task_file_exclusive(dest_path, completed_task, completed_body)
@@ -233,6 +229,27 @@ def generate_next_file_task_id(
     return f"{type_prefix}-{max_num + 1}"
 
 
+def _validate_task_input(input: TaskFileInput) -> str | None:
+    if not input.get("title") or not input["title"].strip():
+        return "Task title is required"
+    if not input.get("column") or not input["column"].strip():
+        return "Task column is required"
+    return None
+
+
+def _build_subtasks(task_id: str, subtasks_input: list[str] | None) -> list[Subtask] | None:
+    if not subtasks_input:
+        return None
+    return [
+        Subtask(
+            id=generate_subtask_id(task_id, i),
+            title=title.strip(),
+            completed=False,
+        )
+        for i, title in enumerate(subtasks_input)
+    ]
+
+
 def add_task_file(
     board_dir: str,
     input: TaskFileInput,
@@ -241,29 +258,14 @@ def add_task_file(
 ) -> TaskOperationResult:
     """Add a new task file to the tasks directory."""
 
-    if not input.get("title") or not input["title"].strip():
-        return {"success": False, "error": "Task title is required"}
+    validation_error = _validate_task_input(input)
+    if validation_error:
+        return {"success": False, "error": validation_error}
 
-    if not input.get("column") or not input["column"].strip():
-        return {"success": False, "error": "Task column is required"}
-
-    # Determine ID prefix from type (e.g., type="epic" -> prefix "epic" -> "epic-1")
     type_prefix = input.get("type") or "task"
     task_id = input.get("id") or generate_next_file_task_id(board_dir, logs_dir, type_prefix)
     now = utc_now_iso()
-
-    # Build subtasks if provided
-    subtasks_input = input.get("subtasks")
-    subtasks: list[Subtask] | None = None
-    if subtasks_input:
-        subtasks = [
-            Subtask(
-                id=generate_subtask_id(task_id, i),
-                title=title.strip(),
-                completed=False,
-            )
-            for i, title in enumerate(subtasks_input)
-        ]
+    subtasks = _build_subtasks(task_id, input.get("subtasks"))
 
     task = Task(
         id=task_id,
@@ -406,17 +408,11 @@ def append_log(
     log_line = f"- {now}{attribution}: {entry}"
 
     body = doc.body
-
-    # Find the ## Log section
-    log_section_regex = re.compile(r"^## Log\s*$", re.MULTILINE)
-    match = log_section_regex.search(body)
-
+    match = re.compile(r"^## Log\s*$", re.MULTILINE).search(body)
     if match:
-        # Insert the log entry after the ## Log header
         insert_pos = match.end()
         body = body[:insert_pos] + "\n" + log_line + body[insert_pos:]
     else:
-        # Create the section at the end
         if body and not body.endswith("\n"):
             body += "\n"
         if body:
@@ -432,6 +428,18 @@ def append_log(
         return {"success": False, "error": f"Failed to append log: {e}"}
 
 
+def _matches_filters(doc: TaskDocument, filters: TaskFilters) -> bool:
+    if filters.get("column") and doc.task.column != filters["column"]:
+        return False
+    if filters.get("tag") and (not doc.task.tags or filters["tag"] not in doc.task.tags):
+        return False
+    if filters.get("priority") and doc.task.priority != filters["priority"]:
+        return False
+    if filters.get("assignee") and doc.task.assignee != filters["assignee"]:
+        return False
+    return not filters.get("parent_id") or doc.task.parent_id == filters["parent_id"]
+
+
 def list_tasks(
     board_dir: str,
     filters: TaskFilters | None = None,
@@ -439,18 +447,8 @@ def list_tasks(
     """List tasks from a directory, with optional filters."""
 
     docs = read_tasks_dir(board_dir)
-
     if filters:
-        if filters.get("column"):
-            docs = [d for d in docs if d.task.column == filters["column"]]
-        if filters.get("tag"):
-            docs = [d for d in docs if d.task.tags and filters["tag"] in d.task.tags]
-        if filters.get("priority"):
-            docs = [d for d in docs if d.task.priority == filters["priority"]]
-        if filters.get("assignee"):
-            docs = [d for d in docs if d.task.assignee == filters["assignee"]]
-        if filters.get("parent_id"):
-            docs = [d for d in docs if d.task.parent_id == filters["parent_id"]]
+        docs = [doc for doc in docs if _matches_filters(doc, filters)]
 
     def sort_key(doc: TaskDocument):
         col = doc.task.column or ""
@@ -467,13 +465,11 @@ def find_task(
 ) -> TaskDocument | None:
     """Find a task by ID in a directory."""
 
-    # Fast path: try convention-based filename
     direct_path = os.path.join(board_dir, task_file_name(task_id))
     direct_doc = read_task_file(direct_path)
     if direct_doc and direct_doc.task.id == task_id:
         return direct_doc
 
-    # Slow path: scan all files
     docs = read_tasks_dir(board_dir)
     for d in docs:
         if d.task.id == task_id:
@@ -493,13 +489,10 @@ def search_task_files(
     results: list[TaskDocument] = []
     for doc in docs:
         title_match = normalized_query in doc.task.title.lower()
-        desc_match = (
-            doc.task.description.lower() if doc.task.description else ""
-        ).find(normalized_query) != -1
+        description = doc.task.description.lower() if doc.task.description else ""
+        desc_match = normalized_query in description
         body_match = normalized_query in doc.body.lower()
-        tag_match = any(
-            normalized_query in t.lower() for t in (doc.task.tags or [])
-        )
+        tag_match = any(normalized_query in t.lower() for t in (doc.task.tags or []))
         if title_match or desc_match or body_match or tag_match:
             results.append(doc)
 

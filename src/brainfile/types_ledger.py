@@ -149,11 +149,12 @@ def _alias_model_validate(
     if not isinstance(data, dict):
         raise TypeError(f"Expected dict, got {type(data).__name__}")
 
-    kwargs: dict[str, Any] = {}
-    for key, value in data.items():
-        normalized_key = aliases.get(key, key)
-        if nested and normalized_key in nested and isinstance(value, dict):
-            kwargs[normalized_key] = nested[normalized_key].model_validate(value)
-        else:
-            kwargs[normalized_key] = value
+    kwargs = {
+        aliases.get(key, key): (
+            nested[aliases.get(key, key)].model_validate(value)
+            if nested and aliases.get(key, key) in nested and isinstance(value, dict)
+            else value
+        )
+        for key, value in data.items()
+    }
     return cls(**kwargs)

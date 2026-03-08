@@ -183,6 +183,28 @@ def _substitute_variables(text: str, values: dict[str, str]) -> str:
     return re.sub(r"\{(\w+)\}", replace_var, text)
 
 
+def _substitute_task_text_fields(processed_task: dict[str, Any], values: dict[str, str]) -> None:
+    if "title" in processed_task:
+        processed_task["title"] = _substitute_variables(processed_task["title"], values)
+    if "description" in processed_task:
+        processed_task["description"] = _substitute_variables(processed_task["description"], values)
+
+
+def _regenerate_subtask_ids(processed_task: dict[str, Any]) -> None:
+    subtasks = processed_task.get("subtasks")
+    if not subtasks:
+        return
+
+    new_task_id = generate_task_id()
+    processed_task["subtasks"] = [
+        {
+            **subtask,
+            "id": generate_subtask_id(new_task_id, index),
+        }
+        for index, subtask in enumerate(subtasks)
+    ]
+
+
 def process_template(
     template: TaskTemplate,
     values: dict[str, str],
@@ -197,30 +219,9 @@ def process_template(
     Returns:
         A partial Task object with substituted values as a dict
     """
-    # Deep copy the template task
     processed_task = template.template.model_dump(by_alias=True, exclude_none=True)
-
-    # Process title
-    if "title" in processed_task:
-        processed_task["title"] = _substitute_variables(processed_task["title"], values)
-
-    # Process description
-    if "description" in processed_task:
-        processed_task["description"] = _substitute_variables(
-            processed_task["description"], values
-        )
-
-    # Generate new IDs for subtasks to avoid duplicates
-    if "subtasks" in processed_task and processed_task["subtasks"]:
-        new_task_id = generate_task_id()
-        processed_task["subtasks"] = [
-            {
-                **subtask,
-                "id": generate_subtask_id(new_task_id, index),
-            }
-            for index, subtask in enumerate(processed_task["subtasks"])
-        ]
-
+    _substitute_task_text_fields(processed_task, values)
+    _regenerate_subtask_ids(processed_task)
     return processed_task
 
 

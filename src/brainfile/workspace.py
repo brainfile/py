@@ -15,10 +15,11 @@ All functions are side-effect free except for :func:`ensure_dirs`.
 
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass
 from io import StringIO
+from pathlib import Path
+from typing import Any
 
 from ._yaml import create_yaml
 from .frontmatter import (
@@ -39,45 +40,53 @@ class WorkspaceDirs:
     brainfile_path: str
 
 
+TaskLookup = dict[str, Any]
+
+
 def get_dirs(brainfile_path: str) -> WorkspaceDirs:
-    resolved = os.path.abspath(brainfile_path)
-    dot_dir = os.path.dirname(resolved)
+    resolved = Path(brainfile_path).resolve()
+    dot_dir = resolved.parent
     return WorkspaceDirs(
-        dot_dir=dot_dir,
-        board_dir=os.path.join(dot_dir, "board"),
-        logs_dir=os.path.join(dot_dir, "logs"),
-        brainfile_path=resolved,
+        dot_dir=str(dot_dir),
+        board_dir=str(dot_dir / "board"),
+        logs_dir=str(dot_dir / "logs"),
+        brainfile_path=str(resolved),
     )
 
 
 def is_workspace(brainfile_path: str) -> bool:
     dirs = get_dirs(brainfile_path)
-    return os.path.exists(dirs.board_dir)
+    return Path(dirs.board_dir).exists()
 
 
 def ensure_dirs(brainfile_path: str) -> WorkspaceDirs:
     dirs = get_dirs(brainfile_path)
-    os.makedirs(dirs.board_dir, exist_ok=True)
-    os.makedirs(dirs.logs_dir, exist_ok=True)
+    Path(dirs.board_dir).mkdir(parents=True, exist_ok=True)
+    Path(dirs.logs_dir).mkdir(parents=True, exist_ok=True)
     return dirs
 
 
 def get_task_file_path(board_dir: str, task_id: str) -> str:
-    return os.path.join(board_dir, task_file_name(task_id))
+    return str(Path(board_dir) / task_file_name(task_id))
 
 
 def get_log_file_path(logs_dir: str, task_id: str) -> str:
-    return os.path.join(logs_dir, task_file_name(task_id))
+    return str(Path(logs_dir) / task_file_name(task_id))
 
 
-def _match_task_document(file_path: str, task_id: str, is_log: bool) -> dict | None:
+def _match_task_document(file_path: str, task_id: str, is_log: bool) -> TaskLookup | None:
     task_doc = read_task_file(file_path)
     if task_doc and task_doc.task.id == task_id:
         return {"doc": task_doc, "file_path": file_path, "is_log": is_log}
     return None
 
 
-def _scan_task_documents(dir_path: str, task_id: str, is_log: bool, fallback_path: str) -> dict | None:
+def _scan_task_documents(
+    dir_path: str,
+    task_id: str,
+    is_log: bool,
+    fallback_path: str,
+) -> TaskLookup | None:
     for doc in read_tasks_dir(dir_path):
         if doc.task.id == task_id:
             return {
@@ -88,28 +97,32 @@ def _scan_task_documents(dir_path: str, task_id: str, is_log: bool, fallback_pat
     return None
 
 
+def _find_task_in_directory(
+    dir_path: str,
+    fallback_path: str,
+    task_id: str,
+    is_log: bool,
+) -> TaskLookup | None:
+    return _match_task_document(fallback_path, task_id, is_log) or _scan_task_documents(
+        dir_path,
+        task_id,
+        is_log,
+        fallback_path,
+    )
+
+
 def find_task(
     dirs: WorkspaceDirs,
     task_id: str,
     search_logs: bool = False,
-) -> dict | None:
+) -> TaskLookup | None:
     """Find a task across active tasks and optionally logs.
 
     Returns a dict: {doc, file_path, is_log} or None.
     """
 
     task_path = get_task_file_path(dirs.board_dir, task_id)
-    found = _match_task_document(task_path, task_id, False)
-    if found is not None:
-        return found
-
-    if search_logs:
-        log_path = get_log_file_path(dirs.logs_dir, task_id)
-        found = _match_task_document(log_path, task_id, True)
-        if found is not None:
-            return found
-
-    found = _scan_task_documents(dirs.board_dir, task_id, False, task_path)
+    found = _find_task_in_directory(dirs.board_dir, task_path, task_id, False)
     if found is not None:
         return found
 
@@ -117,7 +130,7 @@ def find_task(
         return None
 
     log_path = get_log_file_path(dirs.logs_dir, task_id)
-    return _scan_task_documents(dirs.logs_dir, task_id, True, log_path)
+    return _find_task_in_directory(dirs.logs_dir, log_path, task_id, True)
 
 
 _DESCRIPTION_RE = re.compile(r"## Description\n([\s\S]*?)(?=\n## |\n*$)")
@@ -156,8 +169,7 @@ def compose_body(description: str | None = None, log: str | None = None) -> str:
 
 
 def read_board_config(brainfile_path: str) -> BoardConfig:
-    with open(brainfile_path, encoding="utf-8") as f:
-        content = f.read()
+    content = Path(brainfile_path).read_text(encoding="utf-8")
 
     data = BrainfileParser.parse(content)
     if not data:
@@ -166,10 +178,10 @@ def read_board_config(brainfile_path: str) -> BoardConfig:
     return BoardConfig.model_validate(data)
 
 
-def _load_board_config_mapping(yaml_content: str) -> dict:
+def _load_board_config_mapping(yaml_content: str) -> dict[str, Any]:
     yaml = create_yaml()
     try:
-        parsed = yaml.load(StringIO(yaml_content))
+        parsed: Any = yaml.load(StringIO(yaml_content))
     except Exception as exc:
         raise ValueError(f"Failed to parse YAML frontmatter: {exc}") from exc
 
@@ -215,10 +227,7 @@ def serialize_board_config(config: BoardConfig, body: str = "") -> str:
     parts: list[str] = ["---\n", yaml_str, "---\n"]
 
     if body:
-        # Ensure a blank line between frontmatter and body
-        parts.append("\n")
-        parts.append(body)
-        # Ensure trailing newline
+        parts.extend(["\n", body])
         if not body.endswith("\n"):
             parts.append("\n")
 
@@ -228,10 +237,6 @@ def serialize_board_config(config: BoardConfig, body: str = "") -> str:
 def write_board_config(file_path: str, config: BoardConfig, body: str = "") -> None:
     """Write a board config to disk as a markdown file with YAML frontmatter."""
 
-    parent_dir = os.path.dirname(file_path)
-    if parent_dir:
-        os.makedirs(parent_dir, exist_ok=True)
-
-    content = serialize_board_config(config, body)
-    with open(file_path, "w", encoding="utf-8") as f:
-        f.write(content)
+    path = Path(file_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(serialize_board_config(config, body), encoding="utf-8")

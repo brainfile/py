@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import os
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol, TypeAlias
 
 from .parser import BrainfileParser
 
@@ -58,6 +57,13 @@ EXCLUDE_DIRS = (
     ".env",
 )
 
+PathLike: TypeAlias = str | Path
+
+
+class _WatchdogEvent(Protocol):
+    src_path: str
+    is_directory: bool
+
 
 @dataclass
 class DiscoveredFile:
@@ -103,28 +109,28 @@ class WatchResult:
 
 
 def is_brainfile_name(filename: str) -> bool:
-    name = os.path.basename(filename).lower()
+    name = Path(filename).name.lower()
     return name in {"brainfile.md", ".brainfile.md", ".bb.md"} or (
         name.startswith("brainfile.") and name.endswith(".md") and name != "brainfile.md"
     )
 
 
 def extract_brainfile_suffix(filename: str) -> str | None:
-    name = os.path.basename(filename).lower()
+    name = Path(filename).name.lower()
     if name.startswith("brainfile.") and name.endswith(".md") and name != "brainfile.md":
         return name[len("brainfile.") : -3] or None
     return None
 
 
 def _is_private_file(filename: str, relative_path: str) -> bool:
+    relative = Path(relative_path)
     return (
         extract_brainfile_suffix(filename) in {"private", "local", "personal"}
-        or "/." in relative_path
-        or relative_path.startswith(".")
+        or any(part.startswith(".") for part in relative.parts)
     )
 
 
-def _count_tasks_from_dict(board: dict) -> int:
+def _count_tasks_from_dict(board: dict[str, object]) -> int:
     columns = board.get("columns")
     if not isinstance(columns, list):
         return 0
@@ -137,25 +143,38 @@ def _count_tasks_from_dict(board: dict) -> int:
     )
 
 
-def _parse_file_metadata(path: str, relative_path: str) -> DiscoveredFile | None:
+def _coerce_discovered_name(path: Path, title: object) -> str:
+    if isinstance(title, str) and title:
+        return title
+    return path.stem
+
+
+def _coerce_discovered_type(board: dict[str, object] | None) -> str:
+    if not board:
+        return "unknown"
+    file_type = board.get("type")
+    if isinstance(file_type, str) and file_type:
+        return file_type
+    return "board"
+
+
+def _parse_file_metadata(path: Path, root: Path) -> DiscoveredFile | None:
     try:
-        board = BrainfileParser.parse(Path(path).read_text(encoding="utf-8"))
-        name = os.path.basename(path)
-        board_data = board or {}
-        title = board_data.get("title")
-        file_type = board_data.get("type")
+        board = BrainfileParser.parse(path.read_text(encoding="utf-8"))
+        board_data = board if isinstance(board, dict) else None
+        relative_path = path.relative_to(root).as_posix()
 
         return DiscoveredFile(
-            absolute_path=path,
+            absolute_path=str(path),
             relative_path=relative_path,
-            name=title if isinstance(title, str) and title else name.removesuffix(".md"),
-            type=file_type if isinstance(file_type, str) and file_type else ("board" if board else "unknown"),
-            is_hidden=name.startswith("."),
-            is_private=_is_private_file(name, relative_path),
-            item_count=_count_tasks_from_dict(board) if isinstance(board, dict) else 0,
-            modified_at=datetime.fromtimestamp(os.stat(path).st_mtime),
+            name=_coerce_discovered_name(path, board_data.get("title") if board_data else None),
+            type=_coerce_discovered_type(board_data),
+            is_hidden=path.name.startswith("."),
+            is_private=_is_private_file(path.name, relative_path),
+            item_count=_count_tasks_from_dict(board_data) if board_data is not None else 0,
+            modified_at=datetime.fromtimestamp(path.stat().st_mtime),
         )
-    except Exception:
+    except OSError:
         return None
 
 
@@ -171,88 +190,117 @@ def _should_include_file(entry_name: str, options: DiscoveryOptions) -> bool:
     return is_brainfile_name(entry_name) and (options.include_hidden or not entry_name.startswith("."))
 
 
+def _iter_directory_entries(dir_path: Path) -> list[Path]:
+    try:
+        return list(dir_path.iterdir())
+    except PermissionError:
+        return []
+
+
+def _discover_directory(entry: Path, root: Path, options: DiscoveryOptions, exclude_dirs: list[str], depth: int) -> list[DiscoveredFile]:
+    if not _should_recurse(entry.name, options, exclude_dirs):
+        return []
+    return _find(entry, root, options, exclude_dirs, depth + 1)
+
+
+def _discover_file(entry: Path, root: Path, options: DiscoveryOptions) -> DiscoveredFile | None:
+    if not entry.is_file() or not _should_include_file(entry.name, options):
+        return None
+    return _parse_file_metadata(entry, root)
+
+
+def _iter_discovered_entries(
+    dir_path: Path,
+    root: Path,
+    options: DiscoveryOptions,
+    exclude_dirs: list[str],
+    depth: int,
+) -> list[DiscoveredFile]:
+    discovered: list[DiscoveredFile] = []
+    for entry in _iter_directory_entries(dir_path):
+        if entry.is_dir():
+            discovered.extend(_discover_directory(entry, root, options, exclude_dirs, depth))
+            continue
+
+        metadata = _discover_file(entry, root, options)
+        if metadata is not None:
+            discovered.append(metadata)
+    return discovered
+
+
 def _find(
-    dir_path: str,
-    root: str,
+    dir_path: Path,
+    root: Path,
     options: DiscoveryOptions,
     exclude_dirs: list[str],
     depth: int = 0,
 ) -> list[DiscoveredFile]:
     if depth > options.max_depth:
         return []
-
-    discovered: list[DiscoveredFile] = []
-    try:
-        entries = os.listdir(dir_path)
-    except PermissionError:
-        return discovered
-
-    for entry_name in entries:
-        path = os.path.join(dir_path, entry_name)
-        relative_path = os.path.relpath(path, root)
-
-        if os.path.isdir(path):
-            if _should_recurse(entry_name, options, exclude_dirs):
-                discovered.extend(_find(path, root, options, exclude_dirs, depth + 1))
-            continue
-
-        if not os.path.isfile(path) or not _should_include_file(entry_name, options):
-            continue
-
-        metadata = _parse_file_metadata(path, relative_path)
-        if metadata is not None:
-            discovered.append(metadata)
-
-    return discovered
+    return _iter_discovered_entries(dir_path, root, options, exclude_dirs, depth)
 
 
 def discover(root_dir: str, options: DiscoveryOptions | None = None) -> DiscoveryResult:
     resolved_options = options or DiscoveryOptions()
     exclude_dirs = _effective_exclude_dirs(resolved_options)
-    root = os.path.abspath(root_dir)
+    root = Path(root_dir).resolve()
     files = _find(root, root, resolved_options, exclude_dirs)
-    files.sort(key=lambda file: (file.relative_path.count(os.sep), file.relative_path))
-    return DiscoveryResult(root, files, sum(file.item_count for file in files), datetime.now())
+    files.sort(key=lambda file: (file.relative_path.count("/"), file.relative_path))
+    return DiscoveryResult(str(root), files, sum(file.item_count for file in files), datetime.now())
 
 
-def find_primary_brainfile(root_dir: str) -> DiscoveredFile | None:
-    root = os.path.abspath(root_dir)
+def _primary_candidate_names() -> tuple[str, ...]:
+    return ("brainfile.md", ".brainfile.md", ".bb.md")
 
-    for name in ("brainfile.md", ".brainfile.md", ".bb.md"):
-        path = os.path.join(root, name)
-        if not os.path.exists(path):
-            continue
-        metadata = _parse_file_metadata(path, name)
+
+def _find_primary_known_file(root: Path) -> DiscoveredFile | None:
+    for name in _primary_candidate_names():
+        metadata = _parse_primary_candidate(root, name)
         if metadata is not None:
             return metadata
+    return None
 
-    try:
-        entries = os.listdir(root)
-    except PermissionError:
+
+def _parse_primary_candidate(root: Path, name: str) -> DiscoveredFile | None:
+    path = root / name
+    if not path.exists():
         return None
+    return _parse_file_metadata(path, root)
 
-    for entry_name in entries:
-        path = os.path.join(root, entry_name)
-        if (
-            is_brainfile_name(entry_name)
-            and entry_name.lower() not in {"brainfile.md", ".brainfile.md", ".bb.md"}
-            and os.path.isfile(path)
-        ):
-            metadata = _parse_file_metadata(path, entry_name)
-            if metadata is not None:
-                return metadata
+
+def _find_primary_suffixed_file(root: Path) -> DiscoveredFile | None:
+    for entry in _iter_directory_entries(root):
+        if not _is_suffixed_brainfile_entry(entry):
+            continue
+
+        metadata = _parse_file_metadata(entry, root)
+        if metadata is not None:
+            return metadata
 
     return None
 
 
+def _is_suffixed_brainfile_entry(entry: Path) -> bool:
+    if not is_brainfile_name(entry.name):
+        return False
+    if entry.name.lower() in {"brainfile.md", ".brainfile.md", ".bb.md"}:
+        return False
+    return entry.is_file()
+
+
+def find_primary_brainfile(root_dir: str) -> DiscoveredFile | None:
+    root = Path(root_dir).resolve()
+    return _find_primary_known_file(root) or _find_primary_suffixed_file(root)
+
+
 def find_nearest_brainfile(start_dir: str | None = None) -> DiscoveredFile | None:
-    current = os.path.abspath(start_dir or os.getcwd())
+    current = Path(start_dir or Path.cwd()).resolve()
     while True:
-        found = find_primary_brainfile(current)
+        found = find_primary_brainfile(str(current))
         if found is not None:
             return found
 
-        parent = os.path.dirname(current)
+        parent = current.parent
         if parent == current:
             return None
         current = parent
@@ -263,10 +311,10 @@ def watch_brainfiles(
     callback: Callable[[str, DiscoveredFile | str], None],
     on_error: Callable[[WatchError], None] | None = None,
 ) -> WatchResult:
-    root = os.path.abspath(root_dir)
+    root = Path(root_dir).resolve()
 
     def fail(code: str, message: str) -> WatchResult:
-        return WatchResult(False, lambda: None, lambda: False, WatchError(code, message, root))
+        return WatchResult(False, lambda: None, lambda: False, WatchError(code, message, str(root)))
 
     try:
         from watchdog.events import FileSystemEventHandler
@@ -274,78 +322,64 @@ def watch_brainfiles(
     except ImportError:
         return fail("UNKNOWN", "watchdog is required for file watching. Install it with: pip install watchdog")
 
-    if not os.path.isdir(root):
-        if os.path.exists(root):
-            return fail("ENOTDIR", f"Path is not a directory: {root}")
-        return fail("ENOENT", f"Directory does not exist: {root}")
+    startup_error = _validate_watch_root(root)
+    if startup_error is not None:
+        return fail(*startup_error)
 
-    try:
-        os.listdir(root)
-    except PermissionError:
-        return fail("EACCES", f"Permission denied: {root}")
-
-    active = False
+    state = {"active": False}
     lock = threading.RLock()
     observer: Observer | None = None
-    current_observer: Observer | None = None
 
     def is_active() -> bool:
         with lock:
-            return active
+            return state["active"]
 
     def report(code: str, message: str, path: str) -> None:
         if on_error is None:
             return
         try:
             on_error(WatchError(code, message, path))
-        except Exception:
+        except (TypeError, ValueError, RuntimeError):
             pass
 
+    def _handle_callback_event(event: _WatchdogEvent, kind: str) -> None:
+        event_path = Path(event.src_path)
+        if _should_skip_watch_event(event, event_path, is_active):
+            return
+
+        try:
+            event_payload = _build_watch_event_payload(kind, event_path, root)
+            if event_payload is not None:
+                callback(kind, event_payload)
+        except OSError as err:
+            report("UNKNOWN", f"Error processing file event: {err}", str(event_path))
+
     class Handler(FileSystemEventHandler):
-        def _handle(self, event, kind: str) -> None:
-            if event.is_directory or not is_active():
-                return
-            if not is_brainfile_name(os.path.basename(event.src_path)):
-                return
+        def on_created(self, event: _WatchdogEvent) -> None:
+            _handle_callback_event(event, "add")
 
-            try:
-                if kind == "unlink":
-                    callback("unlink", event.src_path)
-                    return
+        def on_modified(self, event: _WatchdogEvent) -> None:
+            _handle_callback_event(event, "change")
 
-                metadata = _parse_file_metadata(event.src_path, os.path.relpath(event.src_path, root))
-                if metadata is not None:
-                    callback(kind, metadata)
-            except OSError as err:
-                report("UNKNOWN", f"Error processing file event: {err}", event.src_path)
-            except Exception as err:
-                report("UNKNOWN", f"Error processing file event: {err}", event.src_path)
-
-        def on_created(self, event) -> None:
-            self._handle(event, "add")
-
-        def on_modified(self, event) -> None:
-            self._handle(event, "change")
-
-        def on_deleted(self, event) -> None:
-            self._handle(event, "unlink")
+        def on_deleted(self, event: _WatchdogEvent) -> None:
+            _handle_callback_event(event, "unlink")
 
     try:
         observer = Observer()
-        observer.schedule(Handler(), root, recursive=True)
+        observer.schedule(Handler(), str(root), recursive=True)
         observer.start()
-    except Exception as err:
+    except (OSError, RuntimeError) as err:
         return fail("UNKNOWN", f"Failed to watch directory: {err}")
 
     with lock:
-        active = True
+        state["active"] = True
 
     def stop() -> None:
-        nonlocal active, observer
+        nonlocal observer
         with lock:
-            if not active:
+            if not state["active"]:
                 return
-            active = False
+            state["active"] = False
             current_observer = observer
             observer = None
 
@@ -356,7 +390,39 @@ def watch_brainfiles(
             current_observer.stop()
             if current_observer.is_alive() and threading.current_thread() is not current_observer:
                 current_observer.join()
-        except Exception:
+        except (RuntimeError, OSError):
             pass
 
     return WatchResult(True, stop, is_active)
+
+
+def _validate_watch_root(root: Path) -> tuple[str, str] | None:
+    if root.is_dir():
+        try:
+            list(root.iterdir())
+        except PermissionError:
+            return "EACCES", f"Permission denied: {root}"
+        return None
+
+    if root.exists():
+        return "ENOTDIR", f"Path is not a directory: {root}"
+
+    return "ENOENT", f"Directory does not exist: {root}"
+
+
+def _should_skip_watch_event(
+    event: _WatchdogEvent,
+    event_path: Path,
+    is_active: Callable[[], bool],
+) -> bool:
+    return event.is_directory or not is_active() or not is_brainfile_name(event_path.name)
+
+
+def _build_watch_event_payload(
+    kind: str,
+    event_path: Path,
+    root: Path,
+) -> DiscoveredFile | str | None:
+    if kind == "unlink":
+        return str(event_path)
+    return _parse_file_metadata(event_path, root)

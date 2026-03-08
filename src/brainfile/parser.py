@@ -47,7 +47,7 @@ def _consolidate_duplicate_columns(columns: list[dict[str, Any]]) -> tuple[list[
 def _format_duplicate_column_warnings(warnings: list[str]) -> list[str]:
     if not warnings:
         return []
-    return ["[Brainfile Parser] Duplicate columns detected:", *[f"  - {warning}" for warning in warnings]]
+    return ["[Brainfile Parser] Duplicate columns detected:", *(f"  - {warning}" for warning in warnings)]
 
 
 def _find_list_item_location(lines: list[str], index: int) -> tuple[int, int]:
@@ -59,11 +59,7 @@ def _find_list_item_location(lines: list[str], index: int) -> tuple[int, int]:
 
 
 def _load_and_normalize_board_data(content: str, warnings: list[str]) -> dict[str, Any] | None:
-    try:
-        data = load_frontmatter_mapping(content)
-    except Exception:
-        return None
-
+    data = load_frontmatter_mapping(content)
     if data is None:
         return None
 
@@ -88,7 +84,16 @@ def _find_frontmatter_end(lines: list[str]) -> int | None:
     return None
 
 
-def _find_rules_section(lines: list[str], rule_type: str, end_index: int) -> tuple[int, int] | None:
+def _is_top_level_yaml_key(line: str) -> bool:
+    return bool(re.match(r"^[a-z]+:", line) and not re.match(r"^\s", line))
+
+
+def _is_other_rule_section(line: str, rule_type: str) -> bool:
+    return bool(re.match(r"^\s{2}[a-z]+:", line) and f"{rule_type}:" not in line)
+
+
+def _iter_rules_section(lines: list[str], rule_type: str, end_index: int) -> list[tuple[int, str]]:
+    matches: list[tuple[int, str]] = []
     in_rules = False
     in_rule_section = False
 
@@ -96,27 +101,61 @@ def _find_rules_section(lines: list[str], rule_type: str, end_index: int) -> tup
         line = lines[index]
         stripped = line.strip()
 
-        if stripped == "rules:":
-            in_rules = True
-            continue
-
-        if in_rules and stripped == f"{rule_type}:":
-            in_rule_section = True
-            continue
-
-        if in_rules and re.match(r"^[a-z]+:", line) and not re.match(r"^\s", line):
-            in_rules = False
-            in_rule_section = False
-            continue
-
+        in_rules, in_rule_section = _advance_rule_scan_state(
+            line,
+            stripped,
+            rule_type,
+            in_rules,
+            in_rule_section,
+        )
         if not in_rule_section:
             continue
 
-        if re.match(r"^\s{2}[a-z]+:", line) and f"{rule_type}:" not in line:
-            in_rule_section = False
-            continue
+        matches.append((index, line))
 
-        yield index, line
+    return matches
+
+
+def _advance_rule_scan_state(
+    line: str,
+    stripped: str,
+    rule_type: str,
+    in_rules: bool,
+    in_rule_section: bool,
+) -> tuple[bool, bool]:
+    if stripped == "rules:":
+        return True, False
+
+    if in_rules and stripped == f"{rule_type}:":
+        return True, True
+
+    if in_rules and _is_top_level_yaml_key(line):
+        return False, False
+
+    if not in_rule_section:
+        return in_rules, False
+
+    if _is_other_rule_section(line, rule_type):
+        return in_rules, False
+
+    return in_rules, True
+
+
+def _parse_board_data(content: str) -> tuple[dict[str, Any] | None, list[str]]:
+    warnings: list[str] = []
+    data = _load_and_normalize_board_data(content, warnings)
+    return data, warnings
+
+
+def _build_parse_result(
+    data: dict[str, Any],
+    filename: str | None,
+    schema_hints: SchemaHints | None,
+    warnings: list[str],
+) -> ParseResult:
+    detected_type = infer_type(data, filename)
+    renderer = infer_renderer(detected_type, data, schema_hints)
+    return ParseResult(data, detected_type, renderer, None, warnings or None)
 
 
 class BrainfileParser:
@@ -134,9 +173,8 @@ class BrainfileParser:
         filename: str | None = None,
         schema_hints: SchemaHints | None = None,
     ) -> ParseResult:
-        warnings: list[str] = []
         try:
-            data = _load_and_normalize_board_data(content, warnings)
+            data, warnings = _parse_board_data(content)
             if data is None:
                 return ParseResult(
                     None,
@@ -145,12 +183,9 @@ class BrainfileParser:
                     "Failed to parse YAML frontmatter",
                     warnings or None,
                 )
-
-            detected_type = infer_type(data, filename)
-            renderer = infer_renderer(detected_type, data, schema_hints)
-            return ParseResult(data, detected_type, renderer, None, warnings or None)
+            return _build_parse_result(data, filename, schema_hints, warnings)
         except Exception as exc:
-            return ParseResult(error=str(exc), warnings=warnings or None)
+            return ParseResult(error=str(exc))
 
     @staticmethod
     def find_task_location(content: str, task_id: str) -> tuple[int, int] | None:
@@ -169,7 +204,7 @@ class BrainfileParser:
             return None
 
         needle = f"id: {rule_id}"
-        for index, line in _find_rules_section(lines, rule_type, end_index):
+        for index, line in _iter_rules_section(lines, rule_type, end_index):
             if needle in line:
                 return _find_list_item_location(lines, index)
 

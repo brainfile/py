@@ -11,8 +11,8 @@ Notes
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
+from pathlib import Path
 
 DOT_BRAINFILE_DIRNAME = ".brainfile"
 BRAINFILE_BASENAME = "brainfile.md"
@@ -29,15 +29,31 @@ class FoundBrainfile:
     kind: BrainfileResolutionKind
 
 
-def _to_absolute(p: str) -> str:
-    return p if os.path.isabs(p) else os.path.abspath(p)
+def _to_absolute(path: str) -> str:
+    return str(Path(path).resolve()) if not Path(path).is_absolute() else path
 
 
-def _exists_file(p: str) -> bool:
+def _exists_file(path: Path) -> bool:
     try:
-        return os.path.isfile(p)
-    except Exception:
+        return path.is_file()
+    except OSError:
         return False
+
+
+def _brainfile_candidates(current_dir: Path) -> list[tuple[Path, BrainfileResolutionKind]]:
+    return [
+        (current_dir / DOT_BRAINFILE_DIRNAME / BRAINFILE_BASENAME, "dotdir"),
+        (current_dir / BRAINFILE_BASENAME, "root"),
+        (current_dir / ".brainfile.md", "hidden"),
+        (current_dir / ".bb.md", "bb"),
+    ]
+
+
+def _find_in_directory(current_dir: Path) -> FoundBrainfile | None:
+    for path, kind in _brainfile_candidates(current_dir):
+        if _exists_file(path):
+            return FoundBrainfile(absolute_path=str(path), project_root=str(current_dir), kind=kind)
+    return None
 
 
 def find_brainfile(start_dir: str | None = None) -> FoundBrainfile | None:
@@ -50,37 +66,15 @@ def find_brainfile(start_dir: str | None = None) -> FoundBrainfile | None:
     4) `.bb.md` (legacy)
     """
 
-    current_dir = os.path.abspath(start_dir or os.getcwd())
-    root = os.path.abspath(os.sep)
+    current_dir = Path(start_dir or Path.cwd()).resolve()
 
     while True:
-        preferred = os.path.join(current_dir, DOT_BRAINFILE_DIRNAME, BRAINFILE_BASENAME)
-        if _exists_file(preferred):
-            return FoundBrainfile(absolute_path=preferred, project_root=current_dir, kind="dotdir")
-
-        legacy = os.path.join(current_dir, BRAINFILE_BASENAME)
-        if _exists_file(legacy):
-            return FoundBrainfile(absolute_path=legacy, project_root=current_dir, kind="root")
-
-        hidden_legacy = os.path.join(current_dir, ".brainfile.md")
-        if _exists_file(hidden_legacy):
-            return FoundBrainfile(
-                absolute_path=hidden_legacy, project_root=current_dir, kind="hidden"
-            )
-
-        bb_legacy = os.path.join(current_dir, ".bb.md")
-        if _exists_file(bb_legacy):
-            return FoundBrainfile(absolute_path=bb_legacy, project_root=current_dir, kind="bb")
-
-        if current_dir == root:
-            break
-
-        parent = os.path.dirname(current_dir)
-        if parent == current_dir:
-            break
-        current_dir = parent
-
-    return None
+        found = _find_in_directory(current_dir)
+        if found is not None:
+            return found
+        if current_dir.parent == current_dir:
+            return None
+        current_dir = current_dir.parent
 
 
 @dataclass(frozen=True)
@@ -91,7 +85,7 @@ class ResolveBrainfilePathOptions:
 
 def resolve_brainfile_path(options: ResolveBrainfilePathOptions | None = None) -> str:
     options = options or ResolveBrainfilePathOptions()
-    start_dir = os.path.abspath(options.start_dir or os.getcwd())
+    start_dir = Path(options.start_dir or Path.cwd()).resolve()
     file_path = options.file_path
 
     is_default_placeholder = file_path is None or file_path in (
@@ -100,45 +94,46 @@ def resolve_brainfile_path(options: ResolveBrainfilePathOptions | None = None) -
     )
 
     if is_default_placeholder:
-        found = find_brainfile(start_dir)
-        if found:
-            return found.absolute_path
-        return _to_absolute(file_path or BRAINFILE_BASENAME)
+        found = find_brainfile(str(start_dir))
+        return found.absolute_path if found else _to_absolute(file_path or BRAINFILE_BASENAME)
 
-    if os.path.isabs(file_path):
-        return file_path
+    if file_path is None:
+        return str(start_dir / BRAINFILE_BASENAME)
 
-    return os.path.abspath(os.path.join(start_dir, file_path))
+    path = Path(file_path)
+    if path.is_absolute():
+        return str(path)
+
+    return str((start_dir / path).resolve())
 
 
 def get_brainfile_state_dir(brainfile_path: str) -> str:
-    abs_path = _to_absolute(brainfile_path)
-    brainfile_dir = os.path.dirname(abs_path)
-    if os.path.basename(brainfile_dir) == DOT_BRAINFILE_DIRNAME:
-        return brainfile_dir
-    return os.path.join(brainfile_dir, DOT_BRAINFILE_DIRNAME)
+    abs_path = Path(_to_absolute(brainfile_path))
+    brainfile_dir = abs_path.parent
+    if brainfile_dir.name == DOT_BRAINFILE_DIRNAME:
+        return str(brainfile_dir)
+    return str(brainfile_dir / DOT_BRAINFILE_DIRNAME)
 
 
 def get_brainfile_state_path(brainfile_path: str) -> str:
     """Deprecated. Brainfile no longer writes/uses state.json."""
 
-    return os.path.join(get_brainfile_state_dir(brainfile_path), BRAINFILE_STATE_BASENAME)
+    return str(Path(get_brainfile_state_dir(brainfile_path)) / BRAINFILE_STATE_BASENAME)
 
 
 def get_dot_brainfile_gitignore_path(brainfile_path: str) -> str:
-    return os.path.join(get_brainfile_state_dir(brainfile_path), DOT_BRAINFILE_GITIGNORE_BASENAME)
+    return str(Path(get_brainfile_state_dir(brainfile_path)) / DOT_BRAINFILE_GITIGNORE_BASENAME)
 
 
 def ensure_dot_brainfile_dir(brainfile_path: str) -> str:
-    d = get_brainfile_state_dir(brainfile_path)
-    os.makedirs(d, exist_ok=True)
-    return d
+    directory = Path(get_brainfile_state_dir(brainfile_path))
+    directory.mkdir(parents=True, exist_ok=True)
+    return str(directory)
 
 
 def ensure_dot_brainfile_gitignore(brainfile_path: str) -> None:
     ensure_dot_brainfile_dir(brainfile_path)
-    gitignore_path = get_dot_brainfile_gitignore_path(brainfile_path)
+    gitignore_path = Path(get_dot_brainfile_gitignore_path(brainfile_path))
 
-    if not os.path.exists(gitignore_path):
-        with open(gitignore_path, "w", encoding="utf-8") as f:
-            f.write("")
+    if not gitignore_path.exists():
+        gitignore_path.write_text("", encoding="utf-8")

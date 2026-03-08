@@ -8,7 +8,7 @@ import os
 import warnings
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypeVar
 
 from ._time import utc_now_iso
 from .models import Deliverable, Task, TaskDocument
@@ -106,6 +106,10 @@ def _timestamp_or(value: str | None, fallback: float) -> float:
     return fallback if parsed is None else parsed
 
 
+def _range_bound_ms(value: str | None) -> float | None:
+    return _parse_timestamp(value) if value else None
+
+
 def _matches_date_range(completed_at: str, date_range: LedgerDateRange | None) -> bool:
     if date_range is None:
         return True
@@ -114,15 +118,9 @@ def _matches_date_range(completed_at: str, date_range: LedgerDateRange | None) -
     if completed_ms is None:
         return False
 
-    from_ms = _parse_timestamp(date_range.from_) if date_range.from_ else None
-    to_ms = _parse_timestamp(date_range.to) if date_range.to else None
-
-    if from_ms is not None and completed_ms < from_ms:
-        return False
-    if to_ms is not None and completed_ms > to_ms:
-        return False
-
-    return True
+    from_ms = _range_bound_ms(date_range.from_)
+    to_ms = _range_bound_ms(date_range.to)
+    return (from_ms is None or completed_ms >= from_ms) and (to_ms is None or completed_ms <= to_ms)
 
 
 def _is_ledger_type(value: str | None) -> bool:
@@ -272,6 +270,17 @@ def _matched_files_for_scope(scope_files: Sequence[str], record_files: Sequence[
     return matched
 
 
+def _warn_invalid_ledger_line(
+    line_number: int,
+    ledger_path: str,
+    detail: str | None = None,
+) -> None:
+    message = f"[brainfile/core] Ignoring invalid ledger line {line_number} in {ledger_path}"
+    if detail:
+        message = f"{message}: {detail}"
+    warnings.warn(message, stacklevel=2)
+
+
 def _parse_ledger_line(line: str, line_number: int, ledger_path: str) -> LedgerRecord | None:
     try:
         parsed = json.loads(line)
@@ -284,20 +293,13 @@ def _parse_ledger_line(line: str, line_number: int, ledger_path: str) -> LedgerR
         return None
 
     if not isinstance(parsed, Mapping):
-        warnings.warn(
-            f"[brainfile/core] Ignoring invalid ledger line {line_number} in {ledger_path}",
-            stacklevel=2,
-        )
+        _warn_invalid_ledger_line(line_number, ledger_path)
         return None
 
     try:
         return LedgerRecord.model_validate(parsed)
     except Exception as error:  # noqa: BLE001
-        warnings.warn(
-            f"[brainfile/core] Ignoring invalid ledger line {line_number} in "
-            f"{ledger_path}: {error}",
-            stacklevel=2,
-        )
+        _warn_invalid_ledger_line(line_number, ledger_path, str(error))
         return None
 
 
@@ -348,56 +350,40 @@ def _normalize_model(cls: type, value: Any) -> Any:
     return cls()
 
 
-def build_ledger_record(
-    task_or_document: TaskDocument | Task,
-    body: str,
-    options: BuildLedgerRecordOptions | Mapping[str, object] | None = None,
-) -> LedgerRecord:
-    """Build a single ledger record from task metadata and markdown body."""
-
-    task = _normalize_task_input(task_or_document)
-    build_options = _normalize_model(BuildLedgerRecordOptions, options)
-
-    completed_at = build_options.completed_at or task.completed_at or utc_now_iso()
-    created_at = task.created_at or completed_at
-
+def _record_files_changed(task: Task, build_options: BuildLedgerRecordOptions) -> list[str]:
     files_changed = _to_unique_paths(build_options.files_changed)
-    effective_files_changed = files_changed if files_changed else _default_files_changed(task)
+    return files_changed if files_changed else _default_files_changed(task)
+
+
+def _record_summary(task: Task, body: str, build_options: BuildLedgerRecordOptions) -> str:
     summary = build_options.summary.strip() if build_options.summary else ""
-    if not summary:
-        summary = _derive_summary(body, task.title)
+    return summary or _derive_summary(body, task.title)
 
-    deliverables = _extract_deliverable_paths(task.contract.deliverables if task.contract else None)
-    tags = _to_unique_strings(task.tags)
-    related_files = _to_unique_paths(task.related_files)
-    constraints = _to_unique_strings(task.contract.constraints if task.contract else None)
 
+def _record_column_history(task: Task, build_options: BuildLedgerRecordOptions) -> list[str]:
     column_history_input = (
         build_options.column_history
         if build_options.column_history is not None
         else ([task.column] if task.column else None)
     )
-    column_history = _to_unique_strings(column_history_input)
+    return _to_unique_strings(column_history_input)
 
-    contract_status = _normalize_contract_status(task)
+
+def _record_validation_attempts(task: Task, build_options: BuildLedgerRecordOptions) -> int | None:
     validation_attempts_source: object | None = build_options.validation_attempts
     if validation_attempts_source is None and task.contract and task.contract.metrics:
         validation_attempts_source = task.contract.metrics.rework_count
-    validation_attempts = _normalize_validation_attempts(validation_attempts_source)
+    return _normalize_validation_attempts(validation_attempts_source)
 
-    subtasks_total, subtasks_completed, has_subtasks = _count_subtasks(task)
 
-    record = LedgerRecord(
-        id=task.id,
-        type=_normalize_ledger_type(task),
-        title=task.title,
-        files_changed=effective_files_changed,
-        created_at=created_at,
-        completed_at=completed_at,
-        cycle_time_hours=_compute_cycle_time_hours(created_at, completed_at),
-        summary=summary,
-    )
-
+def _apply_task_metadata_fields(
+    record: LedgerRecord,
+    task: Task,
+    column_history: list[str],
+    tags: list[str],
+    related_files: list[str],
+    deliverables: list[str],
+) -> None:
     if column_history:
         record.column_history = column_history
     if task.assignee:
@@ -412,16 +398,99 @@ def build_ledger_record(
         record.related_files = related_files
     if deliverables:
         record.deliverables = deliverables
+
+
+def _apply_contract_metadata_fields(
+    record: LedgerRecord,
+    contract_status: LedgerContractStatus | None,
+    validation_attempts: int | None,
+    constraints: list[str],
+) -> None:
     if contract_status:
         record.contract_status = contract_status
     if validation_attempts is not None:
         record.validation_attempts = validation_attempts
     if constraints:
         record.constraints = constraints
+
+
+def _apply_subtask_metadata_fields(
+    record: LedgerRecord,
+    subtasks_total: int,
+    subtasks_completed: int,
+    has_subtasks: bool,
+) -> None:
     if has_subtasks:
         record.subtasks_completed = subtasks_completed
         record.subtasks_total = subtasks_total
 
+
+def _apply_optional_record_fields(
+    record: LedgerRecord,
+    task: Task,
+    column_history: list[str],
+    tags: list[str],
+    related_files: list[str],
+    deliverables: list[str],
+    contract_status: LedgerContractStatus | None,
+    validation_attempts: int | None,
+    constraints: list[str],
+    subtasks_total: int,
+    subtasks_completed: int,
+    has_subtasks: bool,
+) -> None:
+    _apply_task_metadata_fields(record, task, column_history, tags, related_files, deliverables)
+    _apply_contract_metadata_fields(record, contract_status, validation_attempts, constraints)
+    _apply_subtask_metadata_fields(record, subtasks_total, subtasks_completed, has_subtasks)
+
+
+def build_ledger_record(
+    task_or_document: TaskDocument | Task,
+    body: str,
+    options: BuildLedgerRecordOptions | Mapping[str, object] | None = None,
+) -> LedgerRecord:
+    """Build a single ledger record from task metadata and markdown body."""
+
+    task = _normalize_task_input(task_or_document)
+    build_options = _normalize_model(BuildLedgerRecordOptions, options)
+
+    completed_at = build_options.completed_at or task.completed_at or utc_now_iso()
+    created_at = task.created_at or completed_at
+
+    deliverables = _extract_deliverable_paths(task.contract.deliverables if task.contract else None)
+    tags = _to_unique_strings(task.tags)
+    related_files = _to_unique_paths(task.related_files)
+    constraints = _to_unique_strings(task.contract.constraints if task.contract else None)
+    column_history = _record_column_history(task, build_options)
+    contract_status = _normalize_contract_status(task)
+    validation_attempts = _record_validation_attempts(task, build_options)
+    subtasks_total, subtasks_completed, has_subtasks = _count_subtasks(task)
+
+    record = LedgerRecord(
+        id=task.id,
+        type=_normalize_ledger_type(task),
+        title=task.title,
+        files_changed=_record_files_changed(task, build_options),
+        created_at=created_at,
+        completed_at=completed_at,
+        cycle_time_hours=_compute_cycle_time_hours(created_at, completed_at),
+        summary=_record_summary(task, body, build_options),
+    )
+
+    _apply_optional_record_fields(
+        record,
+        task,
+        column_history,
+        tags,
+        related_files,
+        deliverables,
+        contract_status,
+        validation_attempts,
+        constraints,
+        subtasks_total,
+        subtasks_completed,
+        has_subtasks,
+    )
     return record
 
 
@@ -464,6 +533,55 @@ def read_ledger(logs_dir: str) -> list[LedgerRecord]:
     return records
 
 
+def _status_filter_set(status_values: str | list[str] | None) -> set[str] | None:
+    if isinstance(status_values, str):
+        return {status_values}
+    return set(status_values) if status_values else None
+
+
+def _matches_query_tags(record: LedgerRecord, query_tags: list[str] | None) -> bool:
+    if not query_tags:
+        return True
+    record_tags = [tag.lower() for tag in (record.tags or [])]
+    return any(tag in record_tags for tag in query_tags)
+
+
+def _matches_query_status(record: LedgerRecord, status_set: set[str] | None) -> bool:
+    return not status_set or bool(record.contract_status and record.contract_status in status_set)
+
+
+def _matches_query_files(record: LedgerRecord, query_files: list[str] | None) -> bool:
+    if not query_files:
+        return True
+    record_files = _collect_record_files(record)
+    return any(
+        _path_matches(record_file, query_file)
+        for query_file in query_files
+        for record_file in record_files
+    )
+
+
+def _record_matches_query(
+    record: LedgerRecord,
+    query_filters: LedgerQueryFilters,
+    query_tags: list[str] | None,
+    status_set: set[str] | None,
+    query_files: list[str] | None,
+) -> bool:
+    if query_filters.assignee and record.assignee != query_filters.assignee:
+        return False
+    if query_filters.date_range and not _matches_date_range(
+        record.completed_at,
+        query_filters.date_range,
+    ):
+        return False
+    return (
+        _matches_query_tags(record, query_tags)
+        and _matches_query_status(record, status_set)
+        and _matches_query_files(record, query_files)
+    )
+
+
 def query_ledger(
     logs_dir: str,
     filters: LedgerQueryFilters | Mapping[str, object] | None = None,
@@ -471,48 +589,40 @@ def query_ledger(
     """Query ledger records using indexed filters in a single pass."""
 
     query_filters = _normalize_model(LedgerQueryFilters, filters)
-    records = read_ledger(logs_dir)
-
     query_tags = [tag.lower() for tag in query_filters.tags] if query_filters.tags else None
-    status_values = query_filters.contract_status
-    status_set = (
-        {status_values}
-        if isinstance(status_values, str)
-        else (set(status_values) if status_values else None)
-    )
+    status_set = _status_filter_set(query_filters.contract_status)
     query_files = _to_unique_paths(query_filters.files) if query_filters.files else None
 
     filtered: list[LedgerRecord] = []
-    for record in records:
-        if query_filters.assignee and record.assignee != query_filters.assignee:
-            continue
-
-        if query_tags:
-            record_tags = [tag.lower() for tag in (record.tags or [])]
-            if not any(tag in record_tags for tag in query_tags):
-                continue
-
-        if query_filters.date_range and not _matches_date_range(
-            record.completed_at,
-            query_filters.date_range,
-        ):
-            continue
-
-        if status_set and (not record.contract_status or record.contract_status not in status_set):
-            continue
-
-        if query_files:
-            record_files = _collect_record_files(record)
-            if not any(
-                _path_matches(record_file, query_file)
-                for query_file in query_files
-                for record_file in record_files
-            ):
-                continue
-
-        filtered.append(record)
-
+    for record in read_ledger(logs_dir):
+        if _record_matches_query(record, query_filters, query_tags, status_set, query_files):
+            filtered.append(record)
     return filtered
+
+
+def _record_matches_file_history(
+    record: LedgerRecord,
+    normalized_target: str,
+    history_options: FileHistoryOptions,
+) -> bool:
+    if not any(
+        _path_matches(changed_file, normalized_target)
+        for changed_file in (record.files_changed or [])
+    ):
+        return False
+    return not history_options.date_range or _matches_date_range(
+        record.completed_at,
+        history_options.date_range,
+    )
+
+
+_RecordT = TypeVar("_RecordT")
+
+
+def _apply_record_limit(records: list[_RecordT], limit: int | None) -> list[_RecordT]:
+    if limit is not None and limit > 0:
+        return records[:limit]
+    return records
 
 
 def get_file_history(
@@ -527,28 +637,31 @@ def get_file_history(
     if not normalized_target:
         return []
 
-    records: list[LedgerRecord] = []
-    for record in read_ledger(logs_dir):
-        if not any(
-            _path_matches(changed_file, normalized_target)
-            for changed_file in (record.files_changed or [])
-        ):
-            continue
-
-        if history_options.date_range and not _matches_date_range(
-            record.completed_at,
-            history_options.date_range,
-        ):
-            continue
-
-        records.append(record)
-
+    records = [
+        record
+        for record in read_ledger(logs_dir)
+        if _record_matches_file_history(record, normalized_target, history_options)
+    ]
     records.sort(key=lambda record: _timestamp_or(record.completed_at, 0), reverse=True)
+    return _apply_record_limit(records, history_options.limit)
 
-    if history_options.limit is not None and history_options.limit > 0:
-        return records[: history_options.limit]
 
-    return records
+def _build_task_context_entry(
+    record: LedgerRecord,
+    scope_files: list[str],
+    context_options: TaskContextOptions,
+) -> TaskContextEntry | None:
+    if context_options.date_range and not _matches_date_range(
+        record.completed_at,
+        context_options.date_range,
+    ):
+        return None
+
+    matched_files = _matched_files_for_scope(scope_files, _collect_record_files(record))
+    if not matched_files:
+        return None
+
+    return TaskContextEntry(record=record, matched_files=matched_files)
 
 
 def get_task_context(
@@ -566,24 +679,14 @@ def get_task_context(
     if not scope_files:
         return []
 
-    entries: list[TaskContextEntry] = []
-    for record in read_ledger(logs_dir):
-        if context_options.date_range and not _matches_date_range(
-            record.completed_at,
-            context_options.date_range,
-        ):
-            continue
-
-        matched_files = _matched_files_for_scope(scope_files, _collect_record_files(record))
-        if matched_files:
-            entries.append(TaskContextEntry(record=record, matched_files=matched_files))
-
+    entries = [
+        entry
+        for record in read_ledger(logs_dir)
+        for entry in [_build_task_context_entry(record, scope_files, context_options)]
+        if entry is not None
+    ]
     entries.sort(key=lambda entry: _timestamp_or(entry.record.completed_at, 0), reverse=True)
-
-    if context_options.limit is not None and context_options.limit > 0:
-        return entries[: context_options.limit]
-
-    return entries
+    return _apply_record_limit(entries, context_options.limit)
 
 
 __all__ = [

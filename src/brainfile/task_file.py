@@ -15,8 +15,8 @@ Parity notes (matches TypeScript core v2 `taskFile.ts`):
 
 from __future__ import annotations
 
-from pathlib import Path
 from io import StringIO
+from pathlib import Path
 from typing import Any, overload
 
 from ._yaml import create_yaml
@@ -39,19 +39,24 @@ def task_file_name(task_id: str) -> str:
     return f"{task_id}.md"
 
 
-def _load_task_mapping(yaml_content: str) -> dict[str, Any] | None:
+def _parse_yaml_mapping(yaml_content: str) -> dict[str, Any] | None:
     yaml = create_yaml()
     try:
         parsed: Any = yaml.load(StringIO(yaml_content))
     except Exception:
         return None
 
-    if not parsed or not isinstance(parsed, dict):
-        return None
+    return parsed if isinstance(parsed, dict) else None
 
-    if not parsed.get("id") or not parsed.get("title"):
-        return None
 
+def _is_valid_task_mapping(parsed: dict[str, Any] | None) -> bool:
+    return bool(parsed and parsed.get("id") and parsed.get("title"))
+
+
+def _load_task_mapping(yaml_content: str) -> dict[str, Any] | None:
+    parsed = _parse_yaml_mapping(yaml_content)
+    if not _is_valid_task_mapping(parsed):
+        return None
     return parsed
 
 
@@ -89,10 +94,7 @@ def serialize_task_content(task: Task, body: str = "") -> str:
     parts: list[str] = ["---\n", yaml_str, "---\n"]
 
     if body:
-        # Ensure a blank line between frontmatter and body
-        parts.append("\n")
-        parts.append(body)
-        # Ensure trailing newline
+        parts.extend(["\n", body])
         if not body.endswith("\n"):
             parts.append("\n")
 
@@ -138,9 +140,7 @@ def write_task_file(file_path: str, task_or_doc: TaskDocument | Task, body: str 
 
     if isinstance(task_or_doc, TaskDocument):
         task = task_or_doc.task
-        actual_body = task_or_doc.body or ""
-        if body:
-            actual_body = body
+        actual_body = body or task_or_doc.body or ""
     else:
         task = task_or_doc
         actual_body = body
@@ -149,8 +149,7 @@ def write_task_file(file_path: str, task_or_doc: TaskDocument | Task, body: str 
     if path.parent != Path():
         path.parent.mkdir(parents=True, exist_ok=True)
 
-    content = serialize_task_content(task, actual_body)
-    path.write_text(content, encoding="utf-8")
+    path.write_text(serialize_task_content(task, actual_body), encoding="utf-8")
 
 
 def read_tasks_dir(dir_path: str) -> list[TaskDocument]:

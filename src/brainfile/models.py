@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal, cast
 
 from ._keys import camel_to_snake, keys_to_camel
 
@@ -137,40 +137,61 @@ def _resolve_fields(cls: type, data: dict[str, Any]) -> tuple[dict[str, Any], di
     Returns ``(kwargs, extras)`` where extras contains unknown keys preserved
     for round-tripping (e.g. ``x-otto``, ``x-cursor`` extension fields).
     """
-    # Build a lookup of all field names
     field_names = {f.name for f in fields(cls)}
     kwargs: dict[str, Any] = {}
     extras: dict[str, Any] = {}
 
     for key, value in data.items():
-        # Try the key as-is first (snake_case)
-        if key in field_names:
-            kwargs[key] = _coerce_field(cls, key, value)
+        resolved_name = _resolve_field_name(field_names, key)
+        if resolved_name is None:
+            extras[key] = value
             continue
-        # Try converting from camelCase
-        snake_key = camel_to_snake(key)
-        if snake_key in field_names:
-            kwargs[snake_key] = _coerce_field(cls, snake_key, value)
-            continue
-        # Preserve unknown keys in extras for round-tripping
-        extras[key] = value
+        kwargs[resolved_name] = _coerce_field(cls, resolved_name, value)
 
     return kwargs, extras
+
+
+def _resolve_field_name(field_names: set[str], key: str) -> str | None:
+    if key in field_names:
+        return key
+
+    snake_key = camel_to_snake(key)
+    if snake_key in field_names:
+        return snake_key
+
+    return None
+
+
+def _coerce_nested_model_list(target_cls: type[_ModelMixin], value: Any) -> Any:
+    if not isinstance(value, list):
+        return value
+    return [target_cls.model_validate(item) if isinstance(item, dict) else item for item in value]
+
+
+def _coerce_nested_model_dict(target_cls: type[_ModelMixin], value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    return target_cls.model_validate(value)
 
 
 def _coerce_nested_model_value(target_cls_name: str | None, value: Any) -> Any:
     if target_cls_name is None:
         return value
 
-    target_cls = globals()[target_cls_name]
+    target_cls = cast(type[_ModelMixin], globals()[target_cls_name])
     if isinstance(value, list):
-        return [
-            target_cls.model_validate(item) if isinstance(item, dict) else item
-            for item in value
-        ]
+        return _coerce_nested_model_list(target_cls, value)
     if isinstance(value, dict):
-        return target_cls.model_validate(value)
+        return _coerce_nested_model_dict(target_cls, value)
     return value
+
+
+def _nested_model_name(cls_name: str, field_name: str) -> str | None:
+    return NESTED_MODELS.get(cls_name, {}).get(field_name)
+
+
+def _is_nested_model_field(cls_name: str, field_name: str) -> bool:
+    return field_name in NESTED_MODELS.get(cls_name, {})
 
 
 def _coerce_types_config(value: Any) -> Any:
@@ -185,10 +206,9 @@ def _coerce_types_config(value: Any) -> Any:
 def _coerce_field(cls: type, field_name: str, value: Any) -> Any:
     """Coerce a value to the expected type for a field."""
     cls_name = cls.__name__
-    model_map = NESTED_MODELS.get(cls_name, {})
-    nested_model = model_map.get(field_name)
+    nested_model = _nested_model_name(cls_name, field_name)
 
-    if field_name in model_map:
+    if _is_nested_model_field(cls_name, field_name):
         return _coerce_nested_model_value(nested_model, value)
 
     if cls_name == "BoardConfig" and field_name == "types":
@@ -490,7 +510,7 @@ class BoardConfig(_ModelMixin):
     metadata: dict | None = None
 
 
-NESTED_MODELS: dict[str, dict[str, str | None]] = {
+NESTED_MODELS: ClassVar[dict[str, dict[str, str | None]]] = {
     "Task": {
         "subtasks": "Subtask",
         "contract": "Contract",

@@ -4,6 +4,8 @@ import json
 import sys
 import urllib.error
 import urllib.request
+from dataclasses import dataclass, field
+from typing import Any
 
 from .models import _ModelMixin
 
@@ -19,33 +21,15 @@ _HINT_KEYS = {
 }
 
 
+@dataclass(slots=True)
 class SchemaHints(_ModelMixin):
-    __slots__ = (
-        "renderer",
-        "columns_path",
-        "items_path",
-        "title_field",
-        "status_field",
-        "timestamp_field",
-        "_extras",
-    )
-
-    def __init__(
-        self,
-        renderer: str | None = None,
-        columns_path: str | None = None,
-        items_path: str | None = None,
-        title_field: str | None = None,
-        status_field: str | None = None,
-        timestamp_field: str | None = None,
-    ):
-        self.renderer = renderer
-        self.columns_path = columns_path
-        self.items_path = items_path
-        self.title_field = title_field
-        self.status_field = status_field
-        self.timestamp_field = timestamp_field
-        self._extras = {}
+    renderer: str | None = None
+    columns_path: str | None = None
+    items_path: str | None = None
+    title_field: str | None = None
+    status_field: str | None = None
+    timestamp_field: str | None = None
+    _extras: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 def _string_hint(schema: dict[str, object], key: str) -> str | None:
@@ -78,21 +62,37 @@ def _schema_request(schema_url: str) -> urllib.request.Request:
     )
 
 
+def _load_schema_payload(schema_url: str) -> Any:
+    request = _schema_request(schema_url)
+    with urllib.request.urlopen(request, timeout=10) as response:
+        if response.status != 200:
+            raise urllib.error.HTTPError(
+                schema_url,
+                response.status,
+                f"HTTP {response.status}",
+                response.headers,
+                None,
+            )
+        return json.loads(response.read().decode("utf-8"))
+
+
+def _schema_error_message(schema_url: str, exc: Exception) -> str:
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"Failed to load schema: HTTP {exc.code}"
+    if isinstance(exc, urllib.error.URLError):
+        return f"Failed to load schema: {exc}"
+    if isinstance(exc, json.JSONDecodeError):
+        return f"Invalid JSON in schema: {exc}"
+    return f"Error loading schema: {exc}"
+
+
+def _warn_schema_load_error(schema_url: str, exc: Exception) -> None:
+    _warn(f"Warning: {_schema_error_message(schema_url, exc)} from {schema_url}")
+
+
 def load_schema_hints(schema_url: str) -> SchemaHints | None:
     try:
-        with urllib.request.urlopen(_schema_request(schema_url), timeout=10) as response:
-            if response.status != 200:
-                _warn(f"Warning: Failed to load schema from {schema_url}: HTTP {response.status}")
-                return None
-
-            payload = response.read().decode("utf-8")
-            return parse_schema_hints(json.loads(payload))
-    except urllib.error.URLError as exc:
-        _warn(f"Warning: Failed to load schema from {schema_url}: {exc}")
-        return None
-    except json.JSONDecodeError as exc:
-        _warn(f"Warning: Invalid JSON in schema from {schema_url}: {exc}")
-        return None
-    except Exception as exc:
-        _warn(f"Warning: Error loading schema from {schema_url}: {exc}")
-        return None
+        return parse_schema_hints(_load_schema_payload(schema_url))
+    except (urllib.error.HTTPError, urllib.error.URLError, json.JSONDecodeError, TypeError, ValueError, OSError) as exc:
+        _warn_schema_load_error(schema_url, exc)
+    return None

@@ -68,6 +68,19 @@ def _format_subtasks_markdown(subtasks: list[Subtask]) -> str:
     return "## Subtasks\n\n" + "\n".join(items)
 
 
+def _priority_value(task: Task) -> str | None:
+    if not task.priority:
+        return None
+    return task.priority.value if hasattr(task.priority, "value") else task.priority
+
+
+def _template_value(task: Task) -> str | None:
+    if not task.template:
+        return None
+    value = task.template.value if hasattr(task.template, "value") else task.template
+    return str(value)
+
+
 def _format_metadata_section(
     task: Task, context: dict[str, str | None]
 ) -> str | None:
@@ -76,20 +89,16 @@ def _format_metadata_section(
 
     if context.get("board_title"):
         lines.append(f"**Board:** {context['board_title']}")
-
     if context.get("from_column"):
         lines.append(f"**Column:** {context['from_column']}")
 
-    if task.priority:
-        p_val = task.priority.value if hasattr(task.priority, "value") else task.priority
-        lines.append(f"**Priority:** {p_val}")
-
+    priority_value = _priority_value(task)
+    if priority_value:
+        lines.append(f"**Priority:** {priority_value}")
     if task.assignee:
         lines.append(f"**Assignee:** {task.assignee}")
-
     if task.due_date:
         lines.append(f"**Due Date:** {task.due_date}")
-
     if task.created_at:
         lines.append(f"**Created:** {task.created_at}")
 
@@ -120,66 +129,71 @@ def _format_resolution_section(
     return "".join(lines)
 
 
+def _task_title(task: Task, include_task_id: bool) -> str:
+    return f"[{task.id}] {task.title}" if include_task_id else task.title
+
+
+def _metadata_context(
+    from_column: str | None,
+    board_title: str | None,
+) -> dict[str, str | None]:
+    return {"from_column": from_column, "board_title": board_title}
+
+
+def _build_task_sections(
+    task: Task,
+    include_meta: bool,
+    include_subtasks: bool,
+    include_related_files: bool,
+    resolved_by: str | None,
+    resolved_by_pr: str | None,
+    from_column: str | None,
+    board_title: str | None,
+) -> list[str]:
+    sections: list[str] = []
+
+    if task.description:
+        sections.append(task.description)
+    if include_subtasks and task.subtasks:
+        sections.append(_format_subtasks_markdown(task.subtasks))
+    if include_meta:
+        meta = _format_metadata_section(task, _metadata_context(from_column, board_title))
+        if meta:
+            sections.append(meta)
+    if include_related_files and task.related_files:
+        sections.append(_format_related_files_section(task.related_files))
+    if resolved_by or resolved_by_pr:
+        sections.append(_format_resolution_section(resolved_by, resolved_by_pr))
+
+    sections.append("---\n*Archived from brainfile.md*")
+    return sections
+
+
 def format_task_for_github(
     task: Task, options: GitHubFormatOptions | None = None
 ) -> GitHubIssuePayload:
     """Format a Brainfile task as a GitHub Issue payload."""
     options = options or {}
-    include_meta = options.get("include_meta", True)
-    include_subtasks = options.get("include_subtasks", True)
-    include_related_files = options.get("include_related_files", True)
-    resolved_by = options.get("resolved_by")
-    resolved_by_pr = options.get("resolved_by_pr")
-    from_column = options.get("from_column")
-    board_title = options.get("board_title")
-    extra_labels = options.get("extra_labels", [])
-    include_task_id = options.get("include_task_id", True)
+    title = _task_title(task, options.get("include_task_id", True))
+    sections = _build_task_sections(
+        task,
+        options.get("include_meta", True),
+        options.get("include_subtasks", True),
+        options.get("include_related_files", True),
+        options.get("resolved_by"),
+        options.get("resolved_by_pr"),
+        options.get("from_column"),
+        options.get("board_title"),
+    )
 
-    # Build title
-    title = f"[{task.id}] {task.title}" if include_task_id else task.title
+    labels: list[str] = list(task.tags or []) + options.get("extra_labels", [])
+    priority_value = _priority_value(task)
+    if priority_value:
+        labels.append(f"priority:{priority_value}")
 
-    # Build body sections
-    sections: list[str] = []
-
-    # Description
-    if task.description:
-        sections.append(task.description)
-
-    # Subtasks as checklist
-    if include_subtasks and task.subtasks:
-        sections.append(_format_subtasks_markdown(task.subtasks))
-
-    # Metadata section
-    if include_meta:
-        meta = _format_metadata_section(
-            task, {"from_column": from_column, "board_title": board_title}
-        )
-        if meta:
-            sections.append(meta)
-
-    # Related files
-    if include_related_files and task.related_files:
-        sections.append(_format_related_files_section(task.related_files))
-
-    # Resolution info
-    if resolved_by or resolved_by_pr:
-        sections.append(_format_resolution_section(resolved_by, resolved_by_pr))
-
-    # Footer
-    sections.append("---\n*Archived from brainfile.md*")
-
-    # Build labels from tags + extras
-    labels: list[str] = list(task.tags or []) + extra_labels
-
-    # Add priority as label if present
-    if task.priority:
-        p_val = task.priority.value if hasattr(task.priority, "value") else task.priority
-        labels.append(f"priority:{p_val}")
-
-    # Add template type as label if present
-    if task.template:
-        t_val = task.template.value if hasattr(task.template, "value") else task.template
-        labels.append(str(t_val))
+    template_value = _template_value(task)
+    if template_value:
+        labels.append(template_value)
 
     return {
         "title": title,
@@ -211,59 +225,22 @@ def format_task_for_linear(
 ) -> LinearIssuePayload:
     """Format a Brainfile task as a Linear Issue payload."""
     options = options or {}
-    include_meta = options.get("include_meta", True)
-    include_subtasks = options.get("include_subtasks", True)
-    include_related_files = options.get("include_related_files", True)
-    resolved_by = options.get("resolved_by")
-    resolved_by_pr = options.get("resolved_by_pr")
-    from_column = options.get("from_column")
-    board_title = options.get("board_title")
-    state_name = options.get("state_name", "Done")
-    include_task_id = options.get("include_task_id", False)
-
-    # Build title
-    title = f"[{task.id}] {task.title}" if include_task_id else task.title
-
-    # Build description sections
-    sections: list[str] = []
-
-    # Description
-    if task.description:
-        sections.append(task.description)
-
-    # Subtasks as checklist
-    if include_subtasks and task.subtasks:
-        sections.append(_format_subtasks_markdown(task.subtasks))
-
-    # Metadata section
-    if include_meta:
-        meta = _format_metadata_section(
-            task, {"from_column": from_column, "board_title": board_title}
-        )
-        if meta:
-            sections.append(meta)
-
-    # Related files
-    if include_related_files and task.related_files:
-        sections.append(_format_related_files_section(task.related_files))
-
-    # Resolution info
-    if resolved_by or resolved_by_pr:
-        sections.append(_format_resolution_section(resolved_by, resolved_by_pr))
-
-    # Footer
-    sections.append("---\n*Archived from brainfile.md*")
-
-    p_val = (
-        task.priority.value
-        if task.priority and hasattr(task.priority, "value")
-        else task.priority
+    title = _task_title(task, options.get("include_task_id", False))
+    sections = _build_task_sections(
+        task,
+        options.get("include_meta", True),
+        options.get("include_subtasks", True),
+        options.get("include_related_files", True),
+        options.get("resolved_by"),
+        options.get("resolved_by_pr"),
+        options.get("from_column"),
+        options.get("board_title"),
     )
 
     return {
         "title": title,
         "description": "\n\n".join(sections),
-        "priority": _map_priority_to_linear(p_val),
+        "priority": _map_priority_to_linear(_priority_value(task)),
         "labelNames": list(task.tags) if task.tags else None,
-        "stateName": state_name,
+        "stateName": options.get("state_name", "Done"),
     }
